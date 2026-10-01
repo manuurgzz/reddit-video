@@ -38,17 +38,17 @@ from pathlib import Path
 # ══════════════════════════════════════════════════════════════════════════
 
 BASE = Path(__file__).resolve().parent
-AJUSTES = BASE / "ajustes.json"       # carpeta de guiones elegida en la app (no se sube a GitHub)
+AJUSTES = BASE / "ajustes.json"       # bóveda de Obsidian / carpeta de guiones elegida en la app (no se sube a GitHub)
 
 
-def _carpeta_guiones():
+def leer_ajustes():
     try:
-        return Path(json.loads(AJUSTES.read_text(encoding="utf-8"))["carpeta_guiones"])
-    except (OSError, ValueError, KeyError):
-        return BASE / "guiones"
+        return json.loads(AJUSTES.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
-CARPETA_GUIONES = _carpeta_guiones()
+CARPETA_GUIONES = Path(leer_ajustes().get("carpeta_guiones") or BASE / "guiones")
 CARPETA_FONDOS = BASE / "fondos"      # fondos/JABON, fondos/SLIME, ...
 CARPETA_MUSICA = BASE / "musica"      # mp3/m4a/wav opcionales (se elige uno al azar)
 CARPETA_FUENTES = BASE / "fuentes"    # opcional: mete aquí .ttf (p. ej. Montserrat ExtraBold)
@@ -191,6 +191,7 @@ class Escena:
     etiqueta: str
     claves: list
     lineas: list
+    zoom: list = field(default_factory=list)   # frases con "zoom punch" (formato de 02_Clips)
 
 
 @dataclass
@@ -199,6 +200,7 @@ class Corte:
     total: int
     desde: int
     hasta: int
+    fondo: str = ""   # temática de fondo de ese short, si la nota la indica
 
 
 @dataclass
@@ -211,11 +213,14 @@ class Guion:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-#  1. Leer el guion
+#  1. Leer el guion (dos formatos: guion clásico y nota de clips de Obsidian)
 # ──────────────────────────────────────────────────────────────────────────
 
 RE_ESCENA = re.compile(r"^#{2,4}\s*ESCENA\s+(\d+)\s*[·\-–—:.]?\s*(.*?)\s*(\([^)]*\))?\s*$", re.I)
+RE_ESCENA_CLIPS = re.compile(r"^\[ESCENA\s+(\d+)([^\]]*)\]$", re.I)
 RE_ETIQUETA = re.compile(r"\[([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)\]")
+RE_COMILLAS = re.compile(r"[\"“«]([^\"”»]+)[\"”»]")
+LETRAS = "A-Za-zÁÉÍÓÚÜÑáéíóúüñ"
 
 
 def normalizar_etiqueta(t):
@@ -242,26 +247,12 @@ def parsear_linea_narracion(texto):
 def extraer_claves(fondo):
     claves = []
     for m in re.finditer(r"amarillo[^:\n]*:\s*((?:[\"“«][^\"”»]+[\"”»][\s,y]*)+)", fondo, re.I):
-        claves += re.findall(r"[\"“«]([^\"”»]+)[\"”»]", m.group(1))
+        claves += RE_COMILLAS.findall(m.group(1))
     return [c.strip() for c in claves if c.strip()]
 
 
-def parsear_guion(ruta: Path) -> Guion:
-    txt = ruta.read_text(encoding="utf-8")
-    txt = re.sub(r"^---\n.*?\n---\n", "", txt, count=1, flags=re.S)  # frontmatter
-    lineas = txt.splitlines()
-
-    # Título de la tarjeta
-    titulo = ""
-    m = re.search(r"con el t[íi]tulo\s*[\"“«]([^\"”»]+)[\"”»]", txt, re.I)
-    if m:
-        titulo = m.group(1)
-    else:
-        m = re.search(r"###\s*YouTube.*?\*\*T[íi]tulo:\*\*\s*(.+)", txt, re.S | re.I)
-        titulo = m.group(1).strip() if m else ruta.stem
-    titulo = sin_emojis(titulo)
-
-    # Escenas
+def escenas_guion(lineas):
+    """Formato clásico: '### ESCENA N · Título' + '**Narración:**' + '**Fondo / edición:** [ETIQUETA]'."""
     escenas = []
     actual = None
     modo = None
@@ -313,46 +304,109 @@ def parsear_guion(ruta: Path) -> Guion:
         elif modo == "fondo":
             fondo_txt.append(linea)
     cerrar()
+    return escenas
 
-    # Palabras clave -> marcar
+
+def escenas_clips(lineas):
+    """Nota de clips (02_Clips): bloques con '[ESCENA N · FONDO: X]', notas '[Efecto: …]' y el texto narrado.
+    Las escenas se repiten en los clips cortos y en el vídeo completo: gana la última (la más completa)."""
+    escenas, actual, fondo_seccion = {}, None, ""
+    for raw in lineas:
+        l = raw.strip()
+        if l.startswith("#"):  # '## Clip 2 · Parte 2/3 · fondo ARENA'
+            m = re.search(rf"fondo\s+([{LETRAS}]+)", l, re.I)
+            fondo_seccion = normalizar_etiqueta(m.group(1)) if m else ""
+            actual = None
+            continue
+        if l.startswith("```"):
+            actual = None
+            continue
+        me = RE_ESCENA_CLIPS.match(l)
+        if me:
+            n = int(me.group(1))
+            m = re.search(rf"FONDO:\s*([{LETRAS}]+)", me.group(2), re.I)
+            etiqueta = normalizar_etiqueta(m.group(1)) if m else fondo_seccion
+            anterior = escenas.get(n)
+            actual = Escena(n, "", etiqueta or (anterior.etiqueta if anterior else ""), [], [])
+            escenas[n] = actual
+            continue
+        if actual is None or not l:
+            continue
+        if l.startswith("["):
+            m = re.search(r"amarillo:\s*([^\].]+)", l, re.I)
+            if m:
+                actual.claves += [c.strip(" \"“”«»") for c in re.split(r",|\s+y\s+", m.group(1)) if c.strip()]
+            if "zoom" in l.lower():
+                actual.zoom += RE_COMILLAS.findall(l)
+            continue
+        texto_tts, palabras = parsear_linea_narracion(l)
+        if palabras:
+            actual.lineas.append(Linea(texto_tts, palabras))
+    return [escenas[n] for n in sorted(escenas) if escenas[n].lineas]
+
+
+def marcar(escena, frases, atributo):
+    """Pone atributo=True (clave o negrita) en las palabras que forman cada frase."""
+    for frase in frases:
+        objetivo = [norm(w) for w in frase.split() if norm(w)]
+        if not objetivo:
+            continue
+        for ln in escena.lineas:
+            ws = [norm(p.texto) for p in ln.palabras]
+            for i in range(len(ws) - len(objetivo) + 1):
+                if ws[i:i + len(objetivo)] == objetivo:
+                    for p in ln.palabras[i:i + len(objetivo)]:
+                        setattr(p, atributo, True)
+
+
+def cortes_de_tablas(lineas):
+    """Filas 'Parte X/Y' de cualquier tabla que tenga columna de escenas (Mapa de cortes o tabla de clips)."""
+    cortes, cab = {}, None
+    for l in lineas:
+        l = l.strip()
+        if not l.startswith("|"):
+            cab = None
+            continue
+        celdas = [c.strip() for c in l.strip("|").split("|")]
+        if cab is None:
+            cab = [c.lower() for c in celdas]
+            continue
+        mp = re.search(r"Parte\s*(\d+)\s*/\s*(\d+)", celdas[0], re.I)
+        col_esc = next((i for i, c in enumerate(cab) if "escena" in c), None)
+        if not mp or col_esc is None or col_esc >= len(celdas):
+            continue
+        rango = re.findall(r"\d+", celdas[col_esc])
+        if not rango:
+            continue
+        col_fondo = next((i for i, c in enumerate(cab) if "fondo" in c), None)
+        fondo = celdas[col_fondo] if col_fondo is not None and col_fondo < len(celdas) else ""
+        fondo = normalizar_etiqueta(re.sub(rf"[^{LETRAS}]", "", fondo))
+        parte = int(mp.group(1))
+        cortes[parte] = Corte(parte, int(mp.group(2)), int(rango[0]), int(rango[-1]), fondo if fondo in ETIQUETAS else "")
+    return [cortes[k] for k in sorted(cortes)]
+
+
+def parsear_guion(ruta: Path) -> Guion:
+    txt = ruta.read_text(encoding="utf-8")
+    txt = re.sub(r"^---\n.*?\n---\n", "", txt, count=1, flags=re.S)  # frontmatter
+    lineas = txt.splitlines()
+
+    # Título de la tarjeta
+    m = re.search(r"con el t[íi]tulo:?\s*[\"“«]([^\"”»]+)[\"”»]", txt, re.I)
+    if m:
+        titulo = m.group(1)
+    else:
+        m = re.search(r"###\s*YouTube.*?\*\*T[íi]tulo:\*\*\s*(.+)", txt, re.S | re.I)
+        titulo = m.group(1).strip() if m else ruta.stem
+    titulo = sin_emojis(titulo)
+
+    escenas = escenas_guion(lineas) or escenas_clips(lineas)
     for esc in escenas:
-        for clave in esc.claves:
-            objetivo = [norm(w) for w in clave.split() if norm(w)]
-            if not objetivo:
-                continue
-            for ln in esc.lineas:
-                ws = [norm(p.texto) for p in ln.palabras]
-                for i in range(len(ws) - len(objetivo) + 1):
-                    if ws[i:i + len(objetivo)] == objetivo:
-                        for p in ln.palabras[i:i + len(objetivo)]:
-                            p.clave = True
+        marcar(esc, esc.claves, "clave")
+        marcar(esc, esc.zoom, "negrita")
 
-    # Mapa de cortes
-    cortes = []
-    idx = next((i for i, l in enumerate(lineas) if re.search(r"mapa de cortes", l, re.I)), None)
-    if idx is not None:
-        cab = None
-        for l in lineas[idx:]:
-            l = l.strip()
-            if l.startswith("## ") and cortes:
-                break
-            if not l.startswith("|"):
-                continue
-            celdas = [c.strip() for c in l.strip("|").split("|")]
-            if cab is None and any("escena" in c.lower() for c in celdas):
-                cab = [c.lower() for c in celdas]
-                continue
-            mp = re.search(r"Parte\s*(\d+)\s*/\s*(\d+)", celdas[0], re.I)
-            if not mp:
-                continue
-            col_esc = next((i for i, c in enumerate(cab or []) if "escena" in c), 1)
-            rango = re.findall(r"\d+", celdas[col_esc]) if col_esc < len(celdas) else []
-            if not rango:
-                continue
-            cortes.append(Corte(int(mp.group(1)), int(mp.group(2)), int(rango[0]), int(rango[-1])))
-
-    slug = re.sub(r"_guion_?", "_", ruta.stem)
-    return Guion(ruta, slug, titulo, escenas, cortes)
+    slug = re.sub(r"_(guion|clips)_?", "_", ruta.stem)
+    return Guion(ruta, slug, titulo, escenas, cortes_de_tablas(lineas))
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -397,6 +451,52 @@ def guardar_proyecto(slug, datos):
     todos[slug] = datos
     ARCHIVO_PROYECTOS.parent.mkdir(parents=True, exist_ok=True)
     ARCHIVO_PROYECTOS.write_text(json.dumps(todos, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+#  Obsidian: conectar la bóveda y marcar en la nota los clips ya creados
+# ──────────────────────────────────────────────────────────────────────────
+
+def conectar_carpeta(carpeta: Path):
+    """Acepta la bóveda de Obsidian (o una carpeta dentro de ella, o una carpeta normal).
+    Guarda y devuelve (bóveda o None, carpeta de donde leer las notas)."""
+    boveda = next((d for d in [carpeta, *carpeta.parents] if (d / ".obsidian").is_dir()), None)
+    notas = carpeta
+    if boveda and carpeta == boveda:
+        notas = next((boveda / n for n in ("02_Clips", "03_Guiones") if (boveda / n).is_dir()), boveda)
+    AJUSTES.write_text(json.dumps({"boveda": str(boveda) if boveda else "", "carpeta_guiones": str(notas)},
+                                  ensure_ascii=False, indent=1), encoding="utf-8")
+    return boveda, notas
+
+
+def estado_nota(ruta: Path):
+    m = re.search(r"^estado:\s*(\S+)", ruta.read_text(encoding="utf-8"), re.M)
+    return m.group(1) if m else ""
+
+
+def marcar_en_obsidian(ruta: Path, partes, youtube):
+    """Marca '- [x]' en el checklist de la nota los shorts (Parte N/T) y el vídeo de YouTube creados,
+    y actualiza clips_hechos y estado. Si la nota no tiene checklist, no toca nada."""
+    txt = ruta.read_text(encoding="utf-8")
+
+    def tachar(m):
+        linea = m.group(0)
+        p = re.search(r"Parte\s*(\d+)\s*/", linea, re.I)
+        hecho = (p and int(p.group(1)) in partes) or (youtube and re.search(r"YouTube|completo", linea, re.I))
+        return linea.replace("[ ]", "[x]", 1) if hecho else linea
+
+    nuevo = re.sub(r"^\s*- \[ \] .*$", tachar, txt, flags=re.M)
+    hechos = len(re.findall(r"^\s*- \[[xX]\]", nuevo, re.M))
+    total = len(re.findall(r"^\s*- \[[ xX]\]", nuevo, re.M))
+    if nuevo == txt or not total:
+        return False
+    nuevo = re.sub(r"^clips_hechos:.*$", f"clips_hechos: {hechos}/{total}", nuevo, count=1, flags=re.M)
+    if estado_nota(ruta) not in ("publicada", "descartada"):
+        nuevo = re.sub(r"^estado:.*$", f"estado: {'hecha' if hechos == total else 'en-produccion'}",
+                       nuevo, count=1, flags=re.M)
+    ruta.write_text(nuevo, encoding="utf-8")
+    log(f"📝 Obsidian: {hechos}/{total} clips marcados como hechos en la nota.")
+    return True
 
 
 def datos_proyecto(g: Guion):
@@ -970,13 +1070,12 @@ def elegir_clip(etiqueta, rng, ultimo):
     return rng.choice(opciones)
 
 
-def tramos_de_fondo(tramos, total, rng, vertical):
+def tramos_de_fondo(tramos, total, rng, vertical, tema=None):
     """Cambia de clip cada DURACION_FONDO_* (no en cada escena). Devuelve [(ini, fin, carpeta)].
-    Shorts: todos los clips de una misma temática (la primera escena con clips, o una al azar).
+    Shorts: todos los clips de una misma temática (la que diga la nota, la primera escena con clips o una al azar).
     YouTube: la carpeta la marca la escena en curso."""
-    tema = None
     if vertical:
-        tema = next((e.etiqueta for _, _, e in tramos if clips_de(e.etiqueta)), None)
+        tema = tema if tema and clips_de(tema) else next((e.etiqueta for _, _, e in tramos if clips_de(e.etiqueta)), None)
         tema = tema or rng.choice([e for e in ETIQUETAS if clips_de(e)] or [""])
     out, t = [], 0.0
     while t < total - 0.01:
@@ -989,9 +1088,9 @@ def tramos_de_fondo(tramos, total, rng, vertical):
 
 
 def montar(nombre, W, H, tramos, voz_wav: Path, ass_path: Path, total, salida: Path,
-           musica=None, rng=None, gpu=False, rapido=False):
+           musica=None, rng=None, gpu=False, rapido=False, tema=None):
     trabajo = ass_path.parent
-    tramos = tramos_de_fondo(tramos, total, rng, H > W)
+    tramos = tramos_de_fondo(tramos, total, rng, H > W, tema)
     relleno = RELLENO_VERTICAL if H > W else RELLENO_HORIZONTAL
     if rapido:
         W, H = (W // 2) // 2 * 2, (H // 2) // 2 * 2
@@ -1087,11 +1186,11 @@ def resumen(g: Guion):
     for e in g.escenas:
         n = len(clips_de(e.etiqueta)) if e.etiqueta else 0
         aviso = "" if n else "  ⚠️ sin clips en esa carpeta"
-        log(f"   Escena {e.num:>2} · {e.titulo[:34]:<34} [{e.etiqueta or '—'}] {len(e.lineas)} líneas"
+        log(f"   Escena {e.num:>2} {('· ' + e.titulo[:34]) if e.titulo else '':<36} [{e.etiqueta or '—'}] {len(e.lineas)} líneas"
             f"{'  claves: ' + ', '.join(e.claves) if e.claves else ''}{aviso}")
     if g.cortes:
         for c in g.cortes:
-            log(f"   ✂️  Short {c.parte}/{c.total}: escenas {c.desde}→{c.hasta}")
+            log(f"   ✂️  Short {c.parte}/{c.total}: escenas {c.desde}→{c.hasta}" + (f"  [{c.fondo}]" if c.fondo else ""))
     else:
         log("   ⚠️ No encuentro 'Mapa de cortes': solo se hará el vídeo de YouTube.")
     log("")
@@ -1160,7 +1259,7 @@ def main(argv=None):
     semilla = a.semilla if a.semilla is not None else random.randrange(10 ** 6)
     solo = a.solo.lower().replace(" ", "")
     carpeta = CARPETA_SALIDA / g.slug
-    hechos = []
+    hechos, partes_hechas, youtube_hecho = [], set(), False
 
     # ── Vídeo completo YouTube (16:9) ─────────────────────────────────────
     if solo in ("todo", "youtube"):
@@ -1181,6 +1280,7 @@ def main(argv=None):
                musica, random.Random(semilla), a.gpu, a.rapido)
         escribir_srt(col, salida.with_suffix(".srt"))
         hechos.append(salida)
+        youtube_hecho = True
 
     # ── Cortes TikTok / Reels / Shorts (9:16) ─────────────────────────────
     for c in g.cortes:
@@ -1207,9 +1307,12 @@ def main(argv=None):
         escribir_audio(col, total, trabajo / "voz.wav")
         salida = carpeta / f"{g.slug} - Parte {c.parte}de{c.total}.mp4"
         montar(f"Short {c.parte}/{c.total} 9:16", W, H, tramos, trabajo / "voz.wav", trabajo / "subs.ass",
-               total, salida, musica, random.Random(semilla + c.parte * 101), a.gpu, a.rapido)
+               total, salida, musica, random.Random(semilla + c.parte * 101), a.gpu, a.rapido, c.fondo)
         hechos.append(salida)
+        partes_hechas.add(c.parte)
 
+    if hechos and not a.rapido:  # las pruebas rápidas no cuentan como clip hecho
+        marcar_en_obsidian(g.ruta, partes_hechas, youtube_hecho)
     if hechos:
         log("\n✅ Listo:")
         for h in hechos:

@@ -1,5 +1,4 @@
 """Ventana para crear los vídeos sin terminal. Doble clic en crear_video.bat (o en este archivo)."""
-import json
 import os
 import queue
 import threading
@@ -8,6 +7,7 @@ import winsound
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
+from urllib.parse import quote
 
 import guion_a_video as gv
 
@@ -41,17 +41,22 @@ class App(tk.Tk):
         raiz.pack(fill="both", expand=True)
         raiz.columnconfigure(0, weight=1)
 
-        # 1 · Guion
-        f = ttk.LabelFrame(raiz, text="1 · Guion", padding=10)
+        # 1 · Historia
+        f = ttk.LabelFrame(raiz, text="1 · Historia", padding=10)
         f.grid(row=0, column=0, sticky="ew")
         f.columnconfigure(0, weight=1)
+        fila = ttk.Frame(f)
+        fila.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        self.origen = ttk.Label(fila, text="")
+        self.origen.pack(side="left")
+        ttk.Button(fila, text="🔗 Conectar Obsidian…", command=self.conectar).pack(side="right")
         self.combo_guion = ttk.Combobox(f, state="readonly", font=("Segoe UI", 10))
-        self.combo_guion.grid(row=0, column=0, sticky="ew")
+        self.combo_guion.grid(row=1, column=0, sticky="ew")
         self.combo_guion.bind("<<ComboboxSelected>>", lambda e: self.cargar(self.rutas[self.combo_guion.current()]))
-        ttk.Button(f, text="Carpeta de guiones…", command=self.elegir_carpeta).grid(row=0, column=1, padx=(8, 0))
-        ttk.Button(f, text="Otro archivo…", command=self.elegir_archivo).grid(row=0, column=2, padx=(8, 0))
+        ttk.Button(f, text="📖 Abrir nota", command=self.abrir_nota).grid(row=1, column=1, padx=(8, 0))
+        ttk.Button(f, text="Otro archivo…", command=self.elegir_archivo).grid(row=1, column=2, padx=(8, 0))
         self.info = ttk.Label(f, style="Info.TLabel", text="")
-        self.info.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.info.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         # 2 · Post de Reddit
         f = ttk.LabelFrame(raiz, text="2 · Post de Reddit (la tarjeta del principio)", padding=10)
@@ -100,7 +105,7 @@ class App(tk.Tk):
         self.btn_crear.grid(row=4, column=0, sticky="ew")
         self.barra = ttk.Progressbar(raiz, maximum=1.0)
         self.barra.grid(row=5, column=0, sticky="ew", pady=(10, 2))
-        self.estado = ttk.Label(raiz, text="Elige un guion y pulsa «Crear vídeos».", style="Info.TLabel")
+        self.estado = ttk.Label(raiz, text="Elige una historia y pulsa «Crear vídeos».", style="Info.TLabel")
         self.estado.grid(row=6, column=0, sticky="w")
 
         # Detalles
@@ -122,22 +127,48 @@ class App(tk.Tk):
     # ── guion y proyecto ─────────────────────────────────────────────────
     def cargar_lista(self, elegida=None):
         d = gv.CARPETA_GUIONES
+        boveda = gv.leer_ajustes().get("boveda")
+        self.origen["text"] = (f"🟣 Obsidian conectado: {Path(boveda).name} › {d.name}" if boveda
+                               else f"📁 Guiones de: {d}   (pulsa «Conectar Obsidian» para usar tu bóveda)")
         self.rutas = sorted(d.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True) if d.is_dir() else []
         if elegida and elegida not in self.rutas:
             self.rutas.insert(0, elegida)
-        self.combo_guion["values"] = [p.name for p in self.rutas]
+        self.refrescar_nombres()
         if self.rutas:
             self.combo_guion.current(self.rutas.index(elegida) if elegida else 0)
             self.cargar(self.rutas[self.combo_guion.current()])
         else:
-            self.info["text"] = f"No hay guiones en {d}. Usa «Otro archivo…»."
+            self.info["text"] = f"No hay notas en {d}. Usa «Conectar Obsidian…» u «Otro archivo…»."
 
-    def elegir_carpeta(self):
-        d = filedialog.askdirectory(title="Carpeta donde guardas los guiones (.md)", initialdir=gv.CARPETA_GUIONES)
-        if d:
-            gv.CARPETA_GUIONES = Path(d)
-            gv.AJUSTES.write_text(json.dumps({"carpeta_guiones": d}, ensure_ascii=False), encoding="utf-8")
-            self.cargar_lista()
+    def refrescar_nombres(self):
+        """Nombre de cada nota + su estado de Obsidian (pendiente, en-produccion, hecha…)."""
+        actual = self.combo_guion.current()
+        self.combo_guion["values"] = [f"{p.stem}" + (f"   ·   {e}" if (e := gv.estado_nota(p)) else "") for p in self.rutas]
+        if actual >= 0:
+            self.combo_guion.current(actual)
+
+    def conectar(self):
+        d = filedialog.askdirectory(title="Elige tu bóveda de Obsidian (o la carpeta donde están los guiones)",
+                                    initialdir=gv.leer_ajustes().get("boveda") or gv.CARPETA_GUIONES)
+        if not d:
+            return
+        boveda, gv.CARPETA_GUIONES = gv.conectar_carpeta(Path(d))
+        if not boveda:
+            messagebox.showinfo("Carpeta conectada", "Esa carpeta no es una bóveda de Obsidian (no tiene .obsidian), "
+                                                     "pero leeré los guiones que haya dentro.")
+        self.cargar_lista()
+
+    def abrir_nota(self):
+        if not self.g:
+            return
+        boveda = gv.leer_ajustes().get("boveda")
+        try:
+            if boveda and str(self.g.ruta).startswith(boveda):
+                os.startfile("obsidian://open?path=" + quote(str(self.g.ruta)))
+            else:
+                os.startfile(self.g.ruta)
+        except OSError:  # Obsidian no instalado: se abre con el editor de .md
+            os.startfile(self.g.ruta)
 
     def elegir_archivo(self):
         r = filedialog.askopenfilename(title="Elige un guion", filetypes=[("Guion", "*.md")],
@@ -149,7 +180,7 @@ class App(tk.Tk):
         self.g = gv.parsear_guion(ruta)
         self.texto.delete("1.0", "end")
         if not self.g.escenas:
-            self.info["text"] = "⚠️ No encuentro escenas ('### ESCENA N · ...' con '**Narración:**')."
+            self.info["text"] = "⚠️ Esta nota no tiene escenas ('[ESCENA N]' o '### ESCENA N' con '**Narración:**')."
             return
         p = gv.datos_proyecto(self.g)
         self.subreddit.set(p["subreddit"])
@@ -201,7 +232,7 @@ class App(tk.Tk):
     # ── crear ────────────────────────────────────────────────────────────
     def crear(self):
         if not self.g or not self.g.escenas:
-            return messagebox.showwarning("Falta el guion", "Elige un guion válido primero.")
+            return messagebox.showwarning("Falta la historia", "Elige una historia con escenas primero.")
         yt, sh = self.op["youtube"].get(), self.op["shorts"].get()
         if not (yt or sh):
             return messagebox.showwarning("Nada que crear", "Marca YouTube, Shorts o los dos.")
@@ -250,6 +281,7 @@ class App(tk.Tk):
                 if dato:
                     self.barra["value"] = 1.0
                     self.estado["text"] = "✅ Vídeos listos."
+                    self.refrescar_nombres()  # el estado de la nota puede haber cambiado
                     self.abrir_salida()
                 else:
                     self.estado["text"] = "❌ No se pudo terminar. Mira el detalle de abajo."

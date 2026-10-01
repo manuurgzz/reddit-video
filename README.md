@@ -17,7 +17,7 @@ Voz en off automática (gratis, con edge-tts), subtítulos palabra a palabra, ta
    - Si un vídeo dura más de 15 minutos, se usa ese mismo para toda su temática, cogiendo trozos seguidos para no repetir.
    - Gameplay (`RUNNER`, `PARKOUR`): usa solo vídeo que tengas derecho a usar.
 4. **Música (opcional)**: mete mp3 en `musica\` (p. ej. de la YouTube Audio Library o Pixabay Music).
-5. **Guiones**: van en la carpeta `guiones\`, o en la que elijas en la app con «Carpeta de guiones…». Hay uno de ejemplo para copiar (`guiones\ejemplo_vecino-wifi.md`).
+5. **Historias**: pulsa **🔗 Conectar Obsidian…** y elige tu bóveda; la app lee las notas de `02_Clips` (o `03_Guiones`). Sin Obsidian, pon los guiones en `guiones\` (hay uno de ejemplo) o elige cualquier carpeta con el mismo botón.
 
 Las veces siguientes basta con **`crear_video.bat`**.
 
@@ -25,7 +25,7 @@ Las veces siguientes basta con **`crear_video.bat`**.
 
 **Doble clic en `crear_video.bat`** y se abre la app:
 
-1. **Guion**: elige el guion (sale el más reciente primero). Avisa si faltan clips en alguna carpeta de fondos.
+1. **Historia**: elige la nota (la más reciente primero; al lado sale su estado de Obsidian: pendiente, en-produccion, hecha…). «📖 Abrir nota» la abre en Obsidian. Avisa si faltan clips en alguna carpeta de fondos.
 2. **Post de Reddit**: la tarjeta del principio imita un post real (r/subreddit, u/usuario, título). El subreddit sale de la ficha de la historia; el usuario se inventa al azar (🎲 para otro). Todo se puede editar.
 3. **Voz**: cada proyecto nuevo coge una voz al azar (a veces hombre, a veces mujer, distintos acentos) y la recuerda para ese proyecto. «🎲 Otra al azar» para cambiarla y «▶ Escuchar» para oírla.
 4. **Qué crear**: YouTube, Shorts o los dos; música; prueba rápida; gráfica NVIDIA.
@@ -49,7 +49,13 @@ python guion_a_video.py --semilla 1234      # repite exactamente los mismos fond
 
 La voz se guarda en caché (`.cache\tts`): si solo cambias fondos o música, no vuelve a generarla. Si cambias una frase del guion, solo regenera esa línea.
 
-## Qué lee del guion
+## Obsidian
+
+- **Conectar**: «🔗 Conectar Obsidian…» guarda la bóveda en `ajustes.json` (solo en tu PC).
+- **Marcar clips hechos**: al crear vídeos (salvo en «Prueba rápida»), la app marca `- [x]` en el checklist de la nota los shorts (`Parte N/T`) y el vídeo de YouTube creados, y actualiza `clips_hechos` y `estado` (`en-produccion` o `hecha`).
+- **Formato de las notas de clips** (`02_Clips`): bloques con `[ESCENA N · FONDO: JABON]`, notas como `[Palabras en amarillo: a, b]` o `[Efecto: zoom en "frase"]` y el texto narrado debajo. Cada escena se lee una vez aunque aparezca en varios clips. La tabla de clips (`Parte 1/3 | JABÓN | 1 → 4 | …`) decide qué escenas y qué temática de fondo lleva cada short.
+
+## Qué lee del guion clásico
 
 | En el guion | En el vídeo |
 |---|---|
