@@ -1,0 +1,9 @@
+# Vídeos, música y resultados: pesan mucho y tienen derechos de terceros
+fondos/
+musica/
+salida/
+fuentes/
+.cache/
+__pycache__/
+log_ejecucion.txt
+ajustes.json
