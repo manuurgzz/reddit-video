@@ -36,7 +36,8 @@
 | 🟧 **Tarjeta de Reddit** | El vídeo arranca con un post que imita uno real (`r/subreddit`, `u/usuario` y título), editable con vista previa. |
 | 🧼 **Fondos por temática** | Clips *satisfying* o de gameplay (`JABON`, `SLIME`, `ARENA`, `PINTURA`, `PRENSA`, `RUNNER`, `PARKOUR`, `CERA`), recortados o sobre fondo desenfocado según el formato. Un único tema por short. |
 | 📓 **Integración con Obsidian (opcional)** | Lee las notas de tu bóveda, marca los clips hechos en el checklist y actualiza el estado de la nota. |
-| ⚡ **Rápido y con caché** | Aceleración por GPU NVIDIA (NVENC), modo de prueba rápida y caché de voz por línea: solo se regenera lo que cambia. |
+| 🤖 **Piloto automático** | Gemini escribe historias nuevas con tu prompt, la app crea los vídeos de las que apruebas y los publica cada día: programados en YouTube y como borrador en TikTok. |
+| ⚡ **Rápido y con caché** | Aceleración por GPU NVIDIA (NVENC; si el PC no tiene, usa el procesador), modo de prueba rápida y caché de voz por línea: solo se regenera lo que cambia. |
 
 ## Cómo funciona
 
@@ -92,7 +93,7 @@ Abre **`crear_video.bat`** y sigue las cuatro tarjetas:
 3. **Voz.** Cada proyecto nuevo sortea una voz y la recuerda. **🎲 Otra al azar** para cambiarla y **▶ Escuchar** para oírla.
 4. **Qué crear.** YouTube, Shorts o los dos; música; prueba rápida; gráfica NVIDIA.
 
-Pulsa **Crear vídeos**: al terminar se abre la carpeta con el resultado. La voz, el subreddit y el usuario de cada proyecto se guardan en `.cache\proyectos.json`.
+Pulsa **Crear vídeos**: al terminar se abre la carpeta con el resultado. Con **Piloto automático…** (al lado) la app lo hace todo sola cada día: ver [Piloto automático](#piloto-automático). La voz, el subreddit y el usuario de cada proyecto se guardan en `.cache\proyectos.json`.
 
 ### Desde la terminal
 
@@ -107,7 +108,7 @@ Sin ruta, usa la nota o el texto más reciente de la carpeta de guiones.
 | `--analizar` | Solo muestra lo que ha entendido del guion (escenas, fondos, claves y cortes). |
 | `--solo <qué>` | `todo` (por defecto), `youtube`, `cortes`, `parte1`, `parte2`… |
 | `--rapido` | Prueba rápida a media resolución. |
-| `--gpu` | Codifica con NVIDIA NVENC: mucho más rápido. |
+| `--gpu` | Codifica con NVIDIA NVENC: mucho más rápido (si el PC no tiene NVIDIA, usa el procesador). |
 | `--voz <id>` | Fuerza una voz, p. ej. `es-ES-ElviraNeural`. |
 | `--velocidad <±N%>` | Velocidad de la voz, p. ej. `"+10%"`. |
 | `--musica <archivo>` | Usa esa pista en lugar de una al azar de `musica\`. |
@@ -142,6 +143,27 @@ Si la nota no trae *Mapa de cortes* (o es un texto normal), la app parte la hist
 - **Dónde verlos.** En el registro: cada short con su duración, cómo empieza y en qué frase termina. Desde la terminal: `python guion_a_video.py "historia.txt" --analizar`.
 
 Se ajusta en `CONFIGURACIÓN` (ver [Configuración](#configuración)). `python test_cortes.py` comprueba que todo sigue cortando bien.
+
+## Piloto automático
+
+Una pasada al día (con el Programador de tareas de Windows, aunque la app esté cerrada):
+
+1. **Escribe.** Si hay menos historias en marcha de las que indicas, Gemini escribe una nueva con tu `00_Sistema/Prompt-historias-propias.md` y la guarda como nota con su título, descripción y hashtags.
+2. **Espera tu visto bueno.** La lees y pulsas **✓ Aprobar para el piloto**. Se puede desactivar.
+3. **Crea los vídeos** de la historia aprobada más antigua.
+4. **Publica un short en cada hora** que elijas. En YouTube los deja programados; en TikTok, como borrador para publicar con un toque. El vídeo largo sale con el primer short y su enlace va en la descripción de los demás.
+
+El estado de cada nota (`pendiente → aprobada → lista → programada → publicada`) se ve en la app, en la nota y en el Registro de Obsidian. Al terminar cada pasada, Windows te avisa con una notificación.
+
+Se configura en **Piloto automático…**. Para conectar Gemini, YouTube y TikTok, sigue la [guía paso a paso](docs/piloto-automatico.md). Las claves se guardan en `secretos.json`, que no se sube a Git.
+
+> YouTube deja los vídeos subidos por la API en privado hasta que Google aprueba la revisión de tu proyecto. TikTok tiene que aprobar tu app antes de dejarla subir vídeos. Las dos se piden una vez; la guía explica cómo.
+
+```bash
+python automatizar.py --una-vez                        # una pasada ahora
+python automatizar.py --programar 09:00                # una pasada al día (--desprogramar la quita)
+python automatizar.py --conectar-youtube cliente.json
+```
 
 ## Formato del guion
 
@@ -212,21 +234,23 @@ Todos los ajustes están en el bloque `CONFIGURACIÓN`, al principio de [`guion_
 reddit-video/
 ├── app.pyw                 # Interfaz gráfica (Tkinter)
 ├── guion_a_video.py        # Motor: análisis del guion, cortes, voz, subtítulos y montaje
+├── automatizar.py          # Piloto automático: Gemini, pasada diaria y publicación en YouTube y TikTok
 ├── test_cortes.py          # Comprueba los cortes automáticos
-├── automatizar.py          # Piloto automático: diseño, todavía sin implementar
+├── test_piloto.py          # Comprueba el piloto (sin conexión)
 ├── Texto_Voz/              # App Texto a Voz: su motor (voz.py) genera la voz en off; también tiene web propia
 ├── texto_a_voz.bat         # Abre la web de Texto a Voz (http://localhost:8000)
 ├── crear_video.bat         # Abre la app
 ├── INSTALAR_Y_CREAR.bat    # Instala dependencias y abre la app
 ├── requirements.txt        # Dependencias de Python
 ├── guiones/                # Guiones de ejemplo y las historias pegadas en la app
-├── docs/                   # Recursos del README
+├── docs/                   # Guía del piloto automático y recursos del README
 │
 │   # Locales, no se suben a Git:
 ├── fondos/                 # Clips de fondo por temática
 ├── musica/                 # Música opcional
 ├── fuentes/                # Fuentes .ttf opcionales (créala si la necesitas)
 ├── salida/                 # Vídeos generados
+├── secretos.json           # Claves de Gemini, YouTube y TikTok (la crea la app)
 └── .cache/                 # Caché de voz y datos de cada proyecto
 ```
 
@@ -236,7 +260,8 @@ reddit-video/
 - [x] Integración con Obsidian (lectura de notas y checklist de clips)
 - [x] Interfaz con tema oscuro y vista previa del post
 - [x] Cortes automáticos de los shorts y texto normal sin formato (sin depender de Obsidian)
-- [ ] **Piloto automático:** de la historia de Reddit al vídeo publicado sin abrir la app (buscar historias, renderizar con los cortes automáticos y subir). El diseño está en [`automatizar.py`](automatizar.py).
+- [x] **Piloto automático:** Gemini escribe, la app crea los vídeos y los publica (YouTube programado, TikTok como borrador)
+- [ ] Publicación directa en TikTok (*Direct Post*, necesita otra revisión de TikTok) y en Instagram Reels
 - [ ] Notas de edición finas (congelar imagen, pantalla partida…)
 
 Consulta el [registro de cambios](CHANGELOG.md) para ver la evolución del proyecto.

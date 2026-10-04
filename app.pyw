@@ -5,12 +5,14 @@ import random
 import re
 import threading
 import tkinter as tk
+import webbrowser
 import winsound
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog, font, messagebox, ttk
 from urllib.parse import quote
 
+import automatizar as au
 import guion_a_video as gv
 
 try:  # texto nítido en pantallas con escalado
@@ -85,7 +87,10 @@ class App(tk.Tk):
         ttk.Button(c, text="Abrir nota", command=self.abrir_nota).grid(row=0, column=2, sticky="ns", padx=(px(8), 0))
         ttk.Button(c, text="Otro archivo…", command=self.elegir_archivo).grid(row=0, column=3, sticky="ns", padx=(px(8), 0))
         self.info = ttk.Label(c, style="Suave.TLabel")
-        self.info.grid(row=1, column=0, columnspan=4, sticky="w", pady=(px(10), 0))
+        self.info.grid(row=1, column=0, columnspan=3, sticky="w", pady=(px(10), 0))
+        self.btn_aprobar = ttk.Button(c, text="✓  Aprobar para el piloto", style="Acento.TButton", command=self.aprobar)
+        self.btn_aprobar.grid(row=1, column=1, columnspan=3, sticky="e", pady=(px(10), 0))
+        self.btn_aprobar.grid_remove()
 
         # 2 · Post de Reddit: campos a la izquierda, vista previa de la tarjeta a la derecha
         cab, c = self.tarjeta(2, 0, "2", "Post de Reddit", "La tarjeta con la que arranca el vídeo", span=2)
@@ -154,7 +159,10 @@ class App(tk.Tk):
         self.formato(c, "shorts", "Shorts", "TikTok · Reels · 9:16", 9, 16).grid(row=0, column=1, sticky="nsew", padx=(px(6), 0))
         for i, (k, txt) in enumerate([("musica", "Música de fondo"), ("gpu", "Usar gráfica NVIDIA"),
                                       ("rapido", "Prueba rápida (media calidad)")]):
-            ttk.Checkbutton(c, text=txt, variable=self.op[k]).grid(row=1 + i // 2, column=i % 2, sticky="w", pady=(px(10) if i < 2 else px(2), 0))
+            casilla = ttk.Checkbutton(c, text=txt, variable=self.op[k])
+            casilla.grid(row=1 + i // 2, column=i % 2, sticky="w", pady=(px(10) if i < 2 else px(2), 0))
+            if k == "gpu" and not gv.hay_nvenc():
+                casilla.configure(text="Gráfica NVIDIA (no hay)", state="disabled")
 
         # Barra de acción: estado + progreso a la izquierda, botón principal a la derecha
         acciones = ttk.Frame(raiz, style="Fondo.TFrame")
@@ -166,15 +174,10 @@ class App(tk.Tk):
         pista.grid(row=1, column=0, sticky="ew", padx=(0, px(24)), pady=(px(8), px(4)))
         self.relleno = tk.Frame(pista, bg=NARANJA)
         self.relleno.place(x=0, y=0, relheight=1, relwidth=0)
+        self.btn_piloto = ttk.Button(acciones, command=self.piloto)
+        self.btn_piloto.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(0, px(10)))
         self.btn_crear = ttk.Button(acciones, text="Crear vídeos", width=18, style="Primario.TButton", command=self.crear)
-        self.btn_crear.grid(row=0, column=1, rowspan=2, sticky="nsew")
-        # ── Piloto automático · DISEÑO, sin implementar (ver automatizar.py) ──────────────
-        # Irá a la izquierda de «Crear vídeos»: un interruptor que da de alta la tarea programada de Windows
-        # y una línea con lo que hay en cola. Boceto:
-        #   self.auto = tk.BooleanVar(value=gv.leer_ajustes().get("auto", {}).get("activo", False))
-        #   ttk.Checkbutton(acciones, text="Piloto automático", variable=self.auto,
-        #                   command=lambda: automatizar.programar(self.auto.get())).grid(row=0, column=2, ...)
-        #   self.cola = ttk.Label(acciones, style="Estado.TLabel")  # «2 notas aprobadas · próxima pasada: hoy 09:00»
+        self.btn_crear.grid(row=0, column=2, rowspan=2, sticky="nsew")
 
         # Registro (detalle de lo que va haciendo) + accesos a carpetas
         marco = tk.Frame(raiz, bg=TARJETA, highlightthickness=1, highlightbackground=BORDE)
@@ -206,6 +209,7 @@ class App(tk.Tk):
         self.cargar_lista()
         self.pintar_post()
         self.pintar_voz()
+        self.pintar_piloto()
         self.geometry(f"{px(1040)}x{min(px(960), self.winfo_screenheight() - px(80))}")
         self.minsize(px(900), px(720))
         self.barra_oscura()
@@ -484,6 +488,7 @@ class App(tk.Tk):
     def cargar(self, ruta):
         self.g = gv.parsear_guion(ruta)
         self.texto.delete("1.0", "end")
+        self.btn_aprobar.grid() if gv.estado_nota(ruta) == "pendiente" else self.btn_aprobar.grid_remove()
         if not self.g.escenas:
             self.info.configure(text="⚠ No encuentro texto que narrar en esta nota.", foreground=AMARILLO)
             return
@@ -578,6 +583,188 @@ class App(tk.Tk):
         d = gv.CARPETA_SALIDA / self.g.slug if self.g else gv.CARPETA_SALIDA
         os.startfile(d if d.is_dir() else gv.CARPETA_SALIDA)
 
+    # ── piloto automático (automatizar.py) ───────────────────────────────
+    def aprobar(self):
+        """La historia pasa a «aprobada»: el piloto creará y publicará sus vídeos en la próxima pasada."""
+        au.poner_estado(self.g.ruta, "aprobada")
+        self.refrescar_nombres()
+        self.btn_aprobar.grid_remove()
+        self.estado.configure(text="✓ Aprobada: el piloto creará y publicará sus vídeos en la próxima pasada.", foreground=VERDE)
+
+    def pintar_piloto(self):
+        activo = au.ajustes()["activo"]
+        self.btn_piloto.configure(text="●  Piloto activo" if activo else "Piloto automático…",
+                                  style="Acento.TButton" if activo else "TButton")
+
+    def piloto(self):
+        """Ajustes del piloto: Gemini escribe las historias y la app crea y publica los vídeos sola cada día."""
+        px, L = self.px, self.letra
+        cfg, sec = au.ajustes(), au.secretos()
+        v = tk.Toplevel(self, bg=TARJETA)
+        v.title("Piloto automático")
+        v.transient(self)
+        v.grab_set()
+        v.resizable(False, False)
+        c = ttk.Frame(v, padding=(px(24), px(16), px(24), px(20)))
+        c.pack(fill="both", expand=True)
+        c.columnconfigure(1, weight=1)
+        fila = [0]
+
+        def seccion(titulo, lema):
+            ttk.Label(c, text=titulo, style="Seccion.TLabel").grid(row=fila[0], column=0, columnspan=3, sticky="w",
+                                                                  pady=(px(16) if fila[0] else 0, 0))
+            ttk.Label(c, text=lema, style="Suave.TLabel").grid(row=fila[0] + 1, column=0, columnspan=3, sticky="w", pady=(0, px(6)))
+            fila[0] += 2
+
+        def linea(texto, widget, extra=None):
+            if isinstance(texto, str):
+                texto = ttk.Label(c, text=texto, style="Campo.TLabel")
+            texto.grid(row=fila[0], column=0, sticky="w", padx=(0, px(16)), pady=px(4))
+            widget.grid(row=fila[0], column=1, sticky="ew", pady=px(4))
+            if extra:
+                extra.grid(row=fila[0], column=2, sticky="ew", padx=(px(8), 0), pady=px(4))
+            fila[0] += 1
+
+        def entrada(var, **kw):
+            return ttk.Entry(c, textvariable=var, font=(L, 10), **kw)
+
+        var = {k: tk.BooleanVar(value=bool(cfg[k])) for k in ("activo", "revision_humana", "gpu", "youtube", "tiktok", "sintetico")}
+        clave, modelo = tk.StringVar(value=sec.get("gemini", "")), tk.StringVar(value=cfg["modelo"])
+        cola, hora = tk.StringVar(value=str(cfg["cola"])), tk.StringVar(value=cfg["hora"])
+        horas = tk.StringVar(value=", ".join(cfg["horas_publicacion"]))
+        tt = sec.get("tiktok") or {}
+        tt_clave, tt_secreto = tk.StringVar(value=tt.get("client_key", "")), tk.StringVar(value=tt.get("client_secret", ""))
+        guia = lambda: os.startfile(gv.BASE / "docs" / "piloto-automatico.md")
+
+        seccion("1 · Historias", "Gemini las escribe con tu «Prompt-historias-propias» de Obsidian")
+        linea("Clave de Gemini", entrada(clave, show="•"),
+              ttk.Button(c, text="Conseguir clave ↗", command=lambda: webbrowser.open("https://aistudio.google.com/apikey")))
+        linea("Modelo", ttk.Combobox(c, textvariable=modelo, font=(L, 10), values=["gemini-3.8-flash", "gemini-3.1-pro-preview"]))
+        linea("Historias en marcha", ttk.Combobox(c, textvariable=cola, values=[1, 2, 3, 4, 5], state="readonly", width=4, font=(L, 10)),
+              ttk.Label(c, text="a la vez, como mucho", style="Suave.TLabel"))
+        ttk.Checkbutton(c, text="Revisar yo cada historia antes de crear los vídeos (botón «✓ Aprobar»)",
+                        variable=var["revision_humana"]).grid(row=fila[0], column=0, columnspan=3, sticky="w", pady=px(4))
+        fila[0] += 1
+
+        seccion("2 · Vídeos", "Cada día: escribe si hace falta, crea los vídeos de una historia aprobada y publica")
+        gpu = ttk.Checkbutton(c, text="Usar gráfica NVIDIA", variable=var["gpu"])
+        if not gv.hay_nvenc():
+            var["gpu"].set(False)
+            gpu.configure(text="Gráfica NVIDIA (no hay en este PC)", state="disabled")
+        linea("Pasada diaria a las", entrada(hora, width=8), gpu)
+
+        seccion("3 · Publicar", "Un short en cada hora; el vídeo largo sale con el primero")
+        linea("Publicar a las", entrada(horas), ttk.Button(c, text="¿Cómo se conecta?", style="Enlace.TButton", command=guia))
+        conectado = lambda ok: ("✓ Conectado", VERDE) if ok else ("Sin conectar", SUAVE)
+        estado_yt = ttk.Label(c, style="Suave.TLabel", wraplength=px(330))
+        estado_yt.configure(text=conectado(sec.get("youtube"))[0], foreground=conectado(sec.get("youtube"))[1])
+        estado_tt = ttk.Label(c, style="Suave.TLabel", wraplength=px(330))
+        estado_tt.configure(text=conectado(tt.get("refresh_token"))[0], foreground=conectado(tt.get("refresh_token"))[1])
+
+        def conectar(funcion, etiqueta):
+            etiqueta.configure(text="Inicia sesión en el navegador que se ha abierto…", foreground=AMARILLO)
+
+            def trabajo():
+                try:
+                    funcion()
+                    texto, color = "✓ Conectado", VERDE
+                except Exception as e:
+                    texto, color = f"✗ {e}", ROJO
+                self.q.put(("llamar", lambda: etiqueta.winfo_exists() and etiqueta.configure(text=texto, foreground=color)))
+            threading.Thread(target=trabajo, daemon=True).start()
+
+        def conectar_youtube():
+            ruta = filedialog.askopenfilename(parent=v, title="El JSON del cliente OAuth de Google Cloud (App de escritorio)",
+                                              filetypes=[("Cliente OAuth", "*.json")])
+            if ruta:
+                conectar(lambda: au.conectar_youtube(ruta), estado_yt)
+
+        def conectar_tiktok():
+            au.guardar_secretos(tiktok={**(au.secretos().get("tiktok") or {}), "client_key": tt_clave.get().strip(),
+                                        "client_secret": tt_secreto.get().strip()})
+            conectar(au.conectar_tiktok, estado_tt)
+
+        linea(ttk.Checkbutton(c, text="YouTube", variable=var["youtube"]), estado_yt,
+              ttk.Button(c, text="Conectar YouTube…", command=conectar_youtube))
+        linea(ttk.Checkbutton(c, text="TikTok", variable=var["tiktok"]), estado_tt,
+              ttk.Button(c, text="Conectar TikTok…", command=conectar_tiktok))
+        claves_tt = ttk.Frame(c)
+        claves_tt.columnconfigure((0, 1), weight=1, uniform="tt")
+        ttk.Entry(claves_tt, textvariable=tt_clave, font=(L, 10)).grid(row=0, column=0, sticky="ew", padx=(0, px(6)))
+        ttk.Entry(claves_tt, textvariable=tt_secreto, show="•", font=(L, 10)).grid(row=0, column=1, sticky="ew")
+        linea("   Client key · secret", claves_tt)
+        ttk.Label(c, text="En TikTok llegan como borrador: te avisa el móvil y lo publicas con un toque.",
+                  style="Suave.TLabel").grid(row=fila[0], column=1, columnspan=2, sticky="w")
+        fila[0] += 1
+        ttk.Checkbutton(c, text="Avisar a YouTube de que la historia y la voz están hechas con IA",
+                        variable=var["sintetico"]).grid(row=fila[0], column=0, columnspan=3, sticky="w", pady=(px(6), 0))
+        fila[0] += 1
+
+        n = au.cola()
+        textos = {"pendiente": "por aprobar", "aprobada": "aprobada", "lista": "con vídeos", "programada": "publicándose",
+                  "error": "con error"}
+        partes = [f"{n[k]} {t}{'s' * (k == 'aprobada' and n[k] > 1)}" for k, t in textos.items() if n.get(k)]
+        ttk.Label(c, text="En la carpeta:  " + "  ·  ".join(partes) if partes else "Todavía no hay historias en marcha.",
+                  style="Suave.TLabel").grid(
+            row=fila[0], column=0, columnspan=3, sticky="w", pady=(px(18), px(10)))
+        fila[0] += 1
+
+        def guardar(cerrar=True):
+            try:
+                lista = [datetime.strptime(h, "%H:%M").strftime("%H:%M") for h in re.split(r"[,;\s]+", horas.get()) if h]
+                diaria = datetime.strptime(hora.get().strip(), "%H:%M").strftime("%H:%M")
+            except ValueError:
+                messagebox.showwarning("Hora no válida", "Escribe las horas así: 09:00 (y separa varias con comas).", parent=v)
+                return False
+            nuevo = {**cfg, **{k: b.get() for k, b in var.items()}, "modelo": modelo.get().strip() or au.POR_DEFECTO["modelo"],
+                     "cola": int(cola.get()), "hora": diaria, "horas_publicacion": lista or au.POR_DEFECTO["horas_publicacion"]}
+            au.guardar_secretos(gemini=clave.get().strip(), tiktok={**(au.secretos().get("tiktok") or {}),
+                                                                   "client_key": tt_clave.get().strip(), "client_secret": tt_secreto.get().strip()})
+            if nuevo["activo"] and not clave.get().strip():
+                messagebox.showwarning("Falta la clave de Gemini", "Sin la clave, el piloto solo creará y publicará "
+                                       "las historias que apruebes tú; no podrá escribir nuevas.", parent=v)
+            if nuevo["activo"] != cfg["activo"] or (nuevo["activo"] and diaria != cfg["hora"]):
+                try:
+                    au.programar(nuevo["activo"], diaria)
+                except Exception as e:
+                    messagebox.showerror("No se pudo programar la tarea de Windows", str(e), parent=v)
+                    nuevo["activo"] = cfg["activo"]
+            au.guardar_ajustes(nuevo)
+            self.pintar_piloto()
+            if cerrar:
+                v.destroy()
+            return True
+
+        ttk.Checkbutton(c, text="Piloto activado: una pasada al día, aunque la app esté cerrada", variable=var["activo"],
+                        style="Formato.TCheckbutton").grid(row=fila[0], column=0, columnspan=3, sticky="w")
+        fila[0] += 1
+        botones = ttk.Frame(c)
+        botones.grid(row=fila[0], column=0, columnspan=3, sticky="ew", pady=(px(16), 0))
+        ttk.Button(botones, text="▶  Hacer una pasada ahora", command=lambda: guardar() and self.pasada()).pack(side="left")
+        ttk.Button(botones, text="Guardar", style="Acento.TButton", command=guardar).pack(side="right")
+        ttk.Button(botones, text="Cancelar", command=v.destroy).pack(side="right", padx=(0, px(8)))
+        v.update_idletasks()  # centrado sobre la ventana principal
+        v.geometry(f"+{self.winfo_rootx() + (self.winfo_width() - v.winfo_reqwidth()) // 2}"
+                   f"+{max(self.winfo_rooty() + (self.winfo_height() - v.winfo_reqheight()) // 2, 0)}")
+
+    def pasada(self):
+        """Una pasada del piloto ahora mismo, con su detalle en el registro."""
+        self.btn_crear.config(state="disabled", text="Piloto en marcha…")
+        self.btn_piloto["state"] = "disabled"
+        self.estado.configure(foreground=TEXTO)
+        self.texto.delete("1.0", "end")
+        self.relleno.place_configure(relwidth=0)
+
+        def trabajo():
+            ok = "piloto"
+            try:
+                au.pasada()
+            except Exception as e:
+                self.q.put(("log", f"\n❌ Error: {e}"))
+                ok = False
+            self.q.put(("fin", ok))
+        threading.Thread(target=trabajo, daemon=True).start()
+
     # ── mensajes del hilo de trabajo ─────────────────────────────────────
     def bucle(self):
         while not self.q.empty():
@@ -594,9 +781,23 @@ class App(tk.Tk):
                 self.estado["text"] = ""
                 if dato:
                     winsound.PlaySound(str(dato), winsound.SND_FILENAME | winsound.SND_ASYNC)
+            elif tipo == "llamar":
+                dato()
             elif tipo == "fin":
                 self.btn_crear.config(state="normal", text="Crear vídeos")
-                if dato:
+                self.btn_piloto["state"] = "normal"
+                if dato == "piloto":  # puede haber notas nuevas o con otro estado: se refresca la lista sin borrar el registro
+                    actual = self.g.ruta if self.g else None
+                    self.rutas = gv.guiones_de(gv.CARPETA_GUIONES)
+                    if actual and actual not in self.rutas:
+                        self.rutas.insert(0, actual)
+                    self.refrescar_nombres()
+                    if actual:
+                        self.combo_guion.current(self.rutas.index(actual))
+                        self.btn_aprobar.grid() if gv.estado_nota(actual) == "pendiente" else self.btn_aprobar.grid_remove()
+                    self.relleno.place_configure(relwidth=1.0)
+                    self.estado.configure(text="✓ Pasada del piloto terminada: lo que ha hecho está en el registro.", foreground=VERDE)
+                elif dato:
                     self.relleno.place_configure(relwidth=1.0)
                     self.estado.configure(text="✓ Vídeos listos. Te abro la carpeta.", foreground=VERDE)
                     self.refrescar_nombres()  # el estado de la nota puede haber cambiado

@@ -642,14 +642,47 @@ def conectar_carpeta(carpeta: Path):
     notas = carpeta
     if boveda and carpeta == boveda:
         notas = next((boveda / n for n in ("02_Clips", "03_Guiones") if (boveda / n).is_dir()), boveda)
-    AJUSTES.write_text(json.dumps({"boveda": str(boveda) if boveda else "", "carpeta_guiones": str(notas)},
-                                  ensure_ascii=False, indent=1), encoding="utf-8")
+    guardar_ajustes(boveda=str(boveda) if boveda else "", carpeta_guiones=str(notas))
     return boveda, notas
 
 
+def guardar_ajustes(**cambios):
+    """Cambia solo esas claves de ajustes.json (el resto, como el bloque del piloto automático, se queda)."""
+    AJUSTES.write_text(json.dumps({**leer_ajustes(), **cambios}, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _frontmatter(txt):
+    m = re.match(r"---\n(.*?)\n---\n", txt, re.S)
+    return m.group(1) if m else None
+
+
+def campo(ruta: Path, clave):
+    """Valor de un campo del frontmatter de la nota ("" si no está). Entiende "texto entre comillas" con \\n."""
+    m = re.search(rf"^{clave}:[ \t]*(.*)$", _frontmatter(ruta.read_text(encoding="utf-8")) or "", re.M)
+    v = m.group(1).strip() if m else ""
+    try:
+        return json.loads(v) if v.startswith('"') else v.strip("'")
+    except ValueError:
+        return v
+
+
+def poner_campo(ruta: Path, clave, valor):
+    """Escribe (o añade) un campo del frontmatter; si la nota no tiene, se lo crea."""
+    valor = str(valor)
+    linea = f"{clave}: " + (valor if re.fullmatch(r"[\w./+-]+", valor) else json.dumps(valor, ensure_ascii=False))
+    txt = ruta.read_text(encoding="utf-8")
+    fm = _frontmatter(txt)
+    if fm is None:
+        txt = f"---\n{linea}\n---\n{txt}"
+    elif re.search(rf"^{clave}:", fm, re.M):
+        txt = txt.replace(fm, re.sub(rf"^{clave}:.*$", lambda _: linea, fm, count=1, flags=re.M), 1)
+    else:
+        txt = txt.replace(fm, f"{fm}\n{linea}", 1)
+    ruta.write_text(txt, encoding="utf-8")
+
+
 def estado_nota(ruta: Path):
-    m = re.search(r"^estado:\s*(\S+)", ruta.read_text(encoding="utf-8"), re.M)
-    return m.group(1) if m else ""
+    return campo(ruta, "estado")
 
 
 def marcar_en_obsidian(ruta: Path, partes, youtube):
@@ -1252,6 +1285,22 @@ def tramos_de_fondo(tramos, total, rng, vertical, tema=None):
     return out
 
 
+# Solo NVIDIA: con una AMD (RX 6600, h264_amf) el montaje iba más lento que con el procesador (82 s frente a 50 s),
+# porque lo que pesa son los filtros (desenfoque, subtítulos), no la codificación.
+CODEC_GPU = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "21", "-b:v", "0"]
+_nvenc = None
+
+
+def hay_nvenc():
+    """¿Puede ffmpeg codificar con una gráfica NVIDIA en este PC? (se comprueba una vez)"""
+    global _nvenc
+    if _nvenc is None:
+        _nvenc = shutil.which("ffmpeg") is not None and subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=s=640x360", "-frames:v", "5",
+             *CODEC_GPU, "-f", "null", "-"], capture_output=True, creationflags=SIN_VENTANA).returncode == 0
+    return _nvenc
+
+
 def montar(nombre, W, H, tramos, voz_wav: Path, ass_path: Path, total, salida: Path,
            musica=None, rng=None, gpu=False, rapido=False, tema=None):
     trabajo = ass_path.parent
@@ -1312,10 +1361,7 @@ def montar(nombre, W, H, tramos, voz_wav: Path, ass_path: Path, total, salida: P
     else:
         filtros.append(f"[{iv}:a]aresample=48000[a]")
 
-    if gpu:
-        codec = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "21", "-b:v", "0"]
-    else:
-        codec = ["-c:v", "libx264", "-preset", "ultrafast" if rapido else PRESET, "-crf", str(CRF)]
+    codec = CODEC_GPU if gpu else ["-c:v", "libx264", "-preset", "ultrafast" if rapido else PRESET, "-crf", str(CRF)]
 
     grafo = ";".join(filtros)
     (trabajo / "filtros.txt").write_text(grafo, encoding="utf-8")  # solo para depurar
@@ -1421,6 +1467,9 @@ def main(argv=None):
                  "   ajusta CARPETA_TEXTO_VOZ o ejecuta  pip install edge-tts")
     if not todos_los_clips():
         log("⚠️  No hay clips en /fondos: se usará un fondo liso. Mete vídeos en fondos/JABON, fondos/SLIME, ...\n")
+    if a.gpu and not hay_nvenc():
+        log("⚠️  Este PC no tiene una gráfica NVIDIA que codifique vídeo: uso el procesador.\n")
+        a.gpu = False
 
     musica = None
     if not a.sin_musica:

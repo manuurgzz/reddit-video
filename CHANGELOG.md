@@ -5,6 +5,8 @@ Todos los cambios relevantes del proyecto se documentan aquí. El formato sigue 
 ## [Sin publicar]
 
 ### Añadido
+- **Piloto automático** (`automatizar.py` y «Piloto automático…» en la app): Gemini escribe historias con tu prompt de Obsidian, la app crea los vídeos de las que apruebas (botón «✓ Aprobar para el piloto») y los publica en YouTube (programados) y TikTok (borrador), con una tarea diaria de Windows y una notificación al terminar. Guía en `docs/piloto-automatico.md`.
+- `test_piloto.py`: el piloto completo sin conexión.
 - Cortes automáticos de los shorts: si la nota no trae *Mapa de cortes*, la app parte la historia en shorts de ~2:30 que acaban en cliffhanger y deja el final para YouTube; al crear se ajustan a la duración real de la voz.
 - Texto normal sin formato: «＋ Pegar historia…» en la app, archivos `.txt` y notas de `01_Historias`.
 - `test_cortes.py` para comprobar los cortes.
@@ -12,6 +14,8 @@ Todos los cambios relevantes del proyecto se documentan aquí. El formato sigue 
 - Banner y README reorganizado: características, diagrama del proceso, referencia de la línea de comandos y estructura del proyecto.
 
 ### Cambiado
+- «Usar gráfica NVIDIA» ya no rompe el vídeo en un PC sin NVIDIA: usa el procesador y lo avisa (en la app, la casilla aparece desactivada).
+- Conectar otra carpeta de Obsidian ya no borra el resto de ajustes.
 - La voz en off la genera el motor de la app Texto a Voz, ahora incluida en el repo (`Texto_Voz\`, con `texto_a_voz.bat` para abrir su web); se elimina el código propio de edge-tts y el ajuste de asyncio que dejará de existir en Python 3.16. La caché de voz se conserva.
 - La app indica qué escenas van solo en YouTube cuando la tabla de cortes no las incluye en ningún short.
 - Sin título en la nota, la tarjeta usa el nombre del archivo legible («La reforma de mi cunado») en vez del nombre tal cual.
