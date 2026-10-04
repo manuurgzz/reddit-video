@@ -1,5 +1,7 @@
 # Piloto automático · cómo se conecta
 
+[← Volver al README](../README.md)
+
 Todo se configura en la app, con el botón **Piloto automático…** de abajo a la derecha. Las claves se guardan en `secretos.json`, junto a la app. Ese archivo no se sube a GitHub.
 
 ## 1 · Gemini (escribe las historias)
