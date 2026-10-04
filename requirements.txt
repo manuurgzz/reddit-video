@@ -1,0 +1,2 @@
+# Dependencias de Python. FFmpeg se instala aparte (INSTALAR_Y_CREAR.bat lo hace con winget).
+edge-tts

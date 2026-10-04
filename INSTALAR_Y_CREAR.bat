@@ -26,7 +26,7 @@ echo PY=%PY%
 %PY% --version
 
 echo [2/4] Instalando edge-tts...
-%PY% -m pip install --upgrade --quiet edge-tts
+%PY% -m pip install --upgrade --quiet -r requirements.txt
 
 echo [3/4] Comprobando ffmpeg...
 where ffmpeg >nul 2>&1
