@@ -7,6 +7,7 @@ Todos los cambios relevantes del proyecto se documentan aquí. El formato sigue 
 ### Añadido
 - **Piloto automático** (`automatizar.py` y «Piloto automático…» en la app): Gemini escribe historias con tu prompt de Obsidian, la app crea los vídeos de las que apruebas (botón «✓ Aprobar para el piloto») y los publica en YouTube (programados) y TikTok (borrador), con una tarea diaria de Windows y una notificación al terminar. Guía en `docs/piloto-automatico.md`.
 - `test_piloto.py`: el piloto completo sin conexión.
+- Si Gemini está saturado, el piloto reintenta y pasa a otro modelo Flash (`gemini-3.6-flash`, `gemini-3.5-flash`); cada pasada, también las lanzadas desde la app, queda en `.cache/piloto.log`.
 - Cortes automáticos de los shorts: si la nota no trae *Mapa de cortes*, la app parte la historia en shorts de ~2:30 que acaban en cliffhanger y deja el final para YouTube; al crear se ajustan a la duración real de la voz.
 - Texto normal sin formato: «＋ Pegar historia…» en la app, archivos `.txt` y notas de `01_Historias`.
 - `test_cortes.py` para comprobar los cortes.

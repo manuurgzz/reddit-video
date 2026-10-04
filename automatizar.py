@@ -64,6 +64,7 @@ POR_DEFECTO = {
     "sintetico": True,                  # declara a YouTube que hay contenido generado con IA (historia y voz)
 }
 EN_MARCHA = ("pendiente", "aprobada", "lista", "programada")
+MODELOS_RESPALDO = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"]  # si el elegido está saturado (503)
 
 
 def ajustes():
@@ -174,15 +175,19 @@ def gemini(cfg, sistema, turnos, esquema=None):
         config |= {"responseMimeType": "application/json", "responseSchema": esquema}
     cuerpo = {"systemInstruction": {"parts": [{"text": sistema}]}, "generationConfig": config,
               "contents": [{"role": "model" if i % 2 else "user", "parts": [{"text": t}]} for i, t in enumerate(turnos)]}
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{cfg['modelo']}:generateContent"
-    for intento in range(4):
+    modelos = [cfg["modelo"]] + [m for m in MODELOS_RESPALDO if m != cfg["modelo"]]
+    for modelo, intento in ((m, i) for m in modelos for i in range(3)):
         try:
-            r, _ = pedir(url, cuerpo, {"x-goog-api-key": clave})
+            r, _ = pedir(f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent",
+                         cuerpo, {"x-goog-api-key": clave})
             break
-        except RuntimeError as e:  # 429 (límite por minuto del plan gratuito) o 5xx: esperar y reintentar
-            if intento == 3 or not re.match(r"(429|5\d\d) ", str(e)):
+        except RuntimeError as e:  # 429 (límite por minuto) o 5xx (saturado): esperar, reintentar y, si sigue, otro modelo
+            if not re.match(r"(429|5\d\d) ", str(e)) or (modelo, intento) == (modelos[-1], 2):
                 raise
-            time.sleep(30 * (intento + 1))
+            if intento == 2:
+                gv.log(f"   {modelo} sigue saturado: pruebo con {modelos[modelos.index(modelo) + 1]}")
+            else:
+                time.sleep(20 * (intento + 1))
     cand = (r.get("candidates") or [{}])[0]
     texto = "".join(p.get("text", "") for p in cand.get("content", {}).get("parts", []) if not p.get("thought"))
     if cand.get("finishReason") != "STOP" or not texto.strip():
@@ -585,8 +590,21 @@ def motivo(e):
 
 
 def pasada(cfg=None):
-    cfg = cfg or ajustes()
+    """Una pasada; lo que va haciendo sale donde diga gv.log (la app) y queda también en .cache/piloto.log."""
     CANDADO.parent.mkdir(parents=True, exist_ok=True)
+    antes = gv.log
+    with open(REGISTRO_PASADAS, "a", encoding="utf-8") as archivo:
+        def log(m=""):
+            print(m, file=archivo, flush=True)
+            antes(m)
+        gv.log = log
+        try:
+            _pasada(cfg or ajustes())
+        finally:
+            gv.log = antes
+
+
+def _pasada(cfg):
     with open(CANDADO, "w") as candado:
         try:
             msvcrt.locking(candado.fileno(), msvcrt.LK_NBLCK, 1)  # se suelta solo si el proceso muere
@@ -688,13 +706,11 @@ def main(argv=None):
     ap.add_argument("--conectar-tiktok", action="store_true")
     a = ap.parse_args(argv)
     if a.una_vez:  # sin ventana (pythonw): lo que pasa queda en .cache/piloto.log
-        REGISTRO_PASADAS.parent.mkdir(parents=True, exist_ok=True)
-        archivo = open(REGISTRO_PASADAS, "a", encoding="utf-8")
-        gv.log = lambda m="": print(m, file=archivo, flush=True)
         try:
             pasada()
         except BaseException:
-            gv.log(traceback.format_exc())
+            with open(REGISTRO_PASADAS, "a", encoding="utf-8") as archivo:
+                archivo.write(traceback.format_exc())
             avisar("La pasada falló: el detalle está en .cache/piloto.log")
     elif a.programar or a.desprogramar:
         programar(bool(a.programar), a.programar or "")
