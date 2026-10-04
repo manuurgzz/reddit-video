@@ -14,7 +14,7 @@ la app. Por defecto sigues revisando tú cada guion antes de que se renderice.
 
   HOY (a mano)                                   CON PILOTO AUTOMÁTICO
   1. Buscar la historia en Reddit             →  E1 Captar      API de Reddit, filtros, sin repetir (id_reddit)
-  2. Escribir ficha y nota de clips           →  E2 Guionizar   Claude escribe la nota en formato 02_Clips
+  2. Escribir ficha y nota de clips           →  E2 Guionizar   OPCIONAL: los cortes ya son automáticos (ver abajo)
   3. Revisar la nota                          →  E3 Aprobar     cambias «estado: pendiente» a «aprobada»
   4. Abrir la app y pulsar «Crear vídeos»     →  E4 Renderizar  gv.main(...), que ya existe y marca el checklist
   5. Subir a YouTube / TikTok / Reels         →  E5 Publicar    APIs oficiales, programado y escalonado
@@ -66,7 +66,10 @@ la app. Por defecto sigues revisando tú cada guion antes de que se renderice.
     · Saltar los ya vistos buscando «id_reddit: <id>» en la bóveda (las notas ya lo llevan).
     · Guardar la ficha en la carpeta de historias, la que enlaza «historia: [[…]]»: de ahí sale el r/ del post.
     · Revisar los términos de la API de Reddit y anonimizar nombres propios.
-  E2 · Guionizar (Claude)
+  E2 · Guionizar (Claude) · OPCIONAL
+    · Ya no hace falta: la app lee el texto tal cual y calcula sola los cortes de los shorts
+      (cortes_automaticos en guion_a_video.py). E1 puede guardar la historia y pasar directo a E3/E4.
+      Claude solo aportaría extras: palabras en amarillo, frases con zoom, reescritura o un gancho mejor.
     · Una llamada por historia. En el system: la plantilla de la nota de clips y una nota real de ejemplo.
       Es siempre igual, así que se cachea. La respuesta es la nota en Markdown, tal cual.
     · Validar con gv.parsear_guion(): escenas con narración, tabla «Parte X/Y», fondos dentro de ETIQUETAS

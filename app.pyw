@@ -2,9 +2,11 @@
 import os
 import queue
 import random
+import re
 import threading
 import tkinter as tk
 import winsound
+from datetime import date
 from pathlib import Path
 from tkinter import filedialog, font, messagebox, ttk
 from urllib.parse import quote
@@ -69,7 +71,7 @@ class App(tk.Tk):
         ttk.Label(marca, text="Convierte tus guiones en vídeos de historias de Reddit", style="Lema.TLabel").pack(anchor="w")
 
         # 1 · Historia
-        cab, c = self.tarjeta(1, 0, "1", "Historia", "La nota que se convierte en vídeo", span=2)
+        cab, c = self.tarjeta(1, 0, "1", "Historia", "Pega una historia o elige una nota: los cortes se calculan solos", span=2)
         ttk.Button(cab, text="Conectar Obsidian…", command=self.conectar).pack(side="right")
         self.origen = ttk.Label(cab, style="Suave.TLabel")
         self.origen.pack(side="right", padx=(0, px(14)))
@@ -79,10 +81,11 @@ class App(tk.Tk):
         self.combo_guion = ttk.Combobox(c, state="readonly", font=(L, 10))
         self.combo_guion.grid(row=0, column=0, sticky="ew")
         self.combo_guion.bind("<<ComboboxSelected>>", lambda e: self.cargar(self.rutas[self.combo_guion.current()]))
-        ttk.Button(c, text="Abrir nota", command=self.abrir_nota).grid(row=0, column=1, sticky="ns", padx=(px(8), 0))
-        ttk.Button(c, text="Otro archivo…", command=self.elegir_archivo).grid(row=0, column=2, sticky="ns", padx=(px(8), 0))
+        ttk.Button(c, text="＋  Pegar historia…", style="Acento.TButton", command=self.pegar_historia).grid(row=0, column=1, sticky="ns", padx=(px(8), 0))
+        ttk.Button(c, text="Abrir nota", command=self.abrir_nota).grid(row=0, column=2, sticky="ns", padx=(px(8), 0))
+        ttk.Button(c, text="Otro archivo…", command=self.elegir_archivo).grid(row=0, column=3, sticky="ns", padx=(px(8), 0))
         self.info = ttk.Label(c, style="Suave.TLabel")
-        self.info.grid(row=1, column=0, columnspan=3, sticky="w", pady=(px(10), 0))
+        self.info.grid(row=1, column=0, columnspan=4, sticky="w", pady=(px(10), 0))
 
         # 2 · Post de Reddit: campos a la izquierda, vista previa de la tarjeta a la derecha
         cab, c = self.tarjeta(2, 0, "2", "Post de Reddit", "La tarjeta con la que arranca el vídeo", span=2)
@@ -388,7 +391,7 @@ class App(tk.Tk):
         boveda = gv.leer_ajustes().get("boveda")
         self.punto.configure(foreground=VERDE if boveda else SUAVE)
         self.origen["text"] = f"Obsidian · {Path(boveda).name} › {d.name}" if boveda else f"Carpeta local · {d}"
-        self.rutas = sorted(d.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True) if d.is_dir() else []
+        self.rutas = gv.guiones_de(d)
         if elegida and elegida not in self.rutas:
             self.rutas.insert(0, elegida)
         self.refrescar_nombres()
@@ -416,6 +419,50 @@ class App(tk.Tk):
                                                      "pero leeré los guiones que tenga dentro.")
         self.cargar_lista()
 
+    def pegar_historia(self):
+        """Pegar una historia tal cual: se guarda como nota .md en la carpeta de guiones y se carga."""
+        px, L = self.px, self.letra
+        v = tk.Toplevel(self, bg=TARJETA)
+        v.title("Pegar historia")
+        v.transient(self)
+        v.grab_set()
+        c = ttk.Frame(v, padding=px(20))
+        c.pack(fill="both", expand=True)
+        c.columnconfigure(0, weight=1)
+        c.rowconfigure(3, weight=1)
+        titulo, sub = tk.StringVar(), tk.StringVar(value="r/AITAH")
+        ttk.Label(c, text="Título del post", style="Campo.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(c, text="Subreddit", style="Campo.TLabel").grid(row=0, column=1, sticky="w", padx=(px(12), 0))
+        campo_titulo = ttk.Entry(c, textvariable=titulo, font=(L, 10))
+        campo_titulo.grid(row=1, column=0, sticky="ew", pady=(px(5), px(14)))
+        ttk.Entry(c, textvariable=sub, width=16, font=(L, 10)).grid(row=1, column=1, sticky="ew", padx=(px(12), 0), pady=(px(5), px(14)))
+        ttk.Label(c, text="Historia: pégala tal cual. Si tiene secciones con «#», se usan como pistas para los cortes.",
+                  style="Campo.TLabel").grid(row=2, column=0, columnspan=2, sticky="w")
+        texto = tk.Text(c, width=90, height=22, wrap="word", font=(L, 10), bg=CAMPO, fg=TEXTO, insertbackground=TEXTO,
+                        selectbackground=NARANJA, selectforeground="white", relief="flat", padx=px(12), pady=px(10),
+                        highlightthickness=1, highlightbackground=BORDE, highlightcolor=NARANJA)
+        texto.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=(px(5), px(16)))
+
+        def guardar():
+            t, cuerpo, s = titulo.get().strip(), texto.get("1.0", "end").strip(), sub.get().strip()
+            if not t or not cuerpo:
+                return messagebox.showwarning("Falta algo", "Escribe el título del post y pega la historia.", parent=v)
+            nombre = re.sub(r"[^a-z0-9]+", "-", gv.quitar_tildes(t.lower())).strip("-")[:40] or "historia"
+            ruta, n = gv.CARPETA_GUIONES / f"{date.today()}_{nombre}.md", 2
+            while ruta.exists():
+                ruta, n = gv.CARPETA_GUIONES / f"{date.today()}_{nombre}-{n}.md", n + 1
+            ruta.parent.mkdir(parents=True, exist_ok=True)
+            cabecera = f"---\nsubreddit: r/{s.removeprefix('r/')}\n---\n" if s else ""
+            ruta.write_text(f"{cabecera}# {t}\n\n{cuerpo}\n", encoding="utf-8")
+            v.destroy()
+            self.cargar_lista(ruta)
+
+        botones = ttk.Frame(c)
+        botones.grid(row=4, column=0, columnspan=2, sticky="e")
+        ttk.Button(botones, text="Cancelar", command=v.destroy).pack(side="left")
+        ttk.Button(botones, text="Guardar y usar", style="Acento.TButton", command=guardar).pack(side="left", padx=(px(8), 0))
+        campo_titulo.focus_set()
+
     def abrir_nota(self):
         if not self.g:
             return
@@ -429,7 +476,7 @@ class App(tk.Tk):
             os.startfile(self.g.ruta)
 
     def elegir_archivo(self):
-        r = filedialog.askopenfilename(title="Elige un guion", filetypes=[("Guion", "*.md")],
+        r = filedialog.askopenfilename(title="Elige un guion", filetypes=[("Historia o guion", "*.md *.txt")],
                                        initialdir=gv.CARPETA_GUIONES if gv.CARPETA_GUIONES.is_dir() else None)
         if r:
             self.cargar_lista(Path(r))
@@ -438,8 +485,7 @@ class App(tk.Tk):
         self.g = gv.parsear_guion(ruta)
         self.texto.delete("1.0", "end")
         if not self.g.escenas:
-            self.info.configure(text="⚠ Esta nota no tiene escenas: usa «[ESCENA N]» o «### ESCENA N» con «**Narración:**».",
-                                foreground=AMARILLO)
+            self.info.configure(text="⚠ No encuentro texto que narrar en esta nota.", foreground=AMARILLO)
             return
         p = gv.datos_proyecto(self.g)
         self.subreddit.set(p["subreddit"])
@@ -451,7 +497,16 @@ class App(tk.Tk):
         self.combo_voz.current(self.voces.index(p["voz"]))
         self.pintar_voz()
         sin_clips = sorted({e.etiqueta for e in self.g.escenas if e.etiqueta and not gv.clips_de(e.etiqueta)})
-        self.info.configure(text=f"{len(self.g.escenas)} escenas  ·  {len(self.g.cortes)} shorts"
+        cortes = self.g.cortes
+        if cortes and cortes[0].lineas:  # cortes automáticos (la nota no trae «Mapa de cortes»)
+            resumen = (f"~{gv.mmss(gv.linea_de_tiempo_estimada(self.g.escenas)[1][-1])} de voz  ·  {len(cortes)} shorts "
+                       f"automáticos de ~{gv.mmss(sum(c.seg for c in cortes) / len(cortes))}"
+                       + ("  ·  el final, solo en YouTube" if gv.FINAL_SOLO_YOUTUBE else ""))
+        else:
+            fuera = gv.solo_youtube(self.g)
+            resumen = (f"{len(self.g.escenas)} escenas  ·  {len(cortes)} shorts"
+                       + (f"  ·  escena{'s' * (len(fuera) > 1)} {gv.lista(fuera)}, solo en YouTube" if fuera else ""))
+        self.info.configure(text=resumen
                                  + (f"      ⚠ Sin clips en {', '.join(sin_clips)}: se usarán otros fondos" if sin_clips else ""),
                             foreground=AMARILLO if sin_clips else SUAVE)
         gv.resumen(self.g)

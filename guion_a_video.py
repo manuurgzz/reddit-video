@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-guion_a_video.py — Convierte un guion de Obsidian en vídeos estilo "historias de Reddit".
+guion_a_video.py — Convierte una historia (texto normal, .txt o nota de Obsidian) en vídeos estilo "historias de Reddit".
 
   · Vídeo completo 16:9 para YouTube
-  · Cortes 9:16 para TikTok / Reels / Shorts (según el "Mapa de cortes" del guion)
+  · Cortes 9:16 para TikTok / Reels / Shorts (los del "Mapa de cortes" de la nota o, si no lo trae, calculados solos)
 
 Uso rápido (Windows, desde la carpeta del script):
     python guion_a_video.py                      -> último guion de la carpeta de guiones
@@ -30,7 +30,7 @@ import subprocess
 import sys
 import unicodedata
 import wave
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -95,6 +95,15 @@ COLA_NORMAL = 1.2                    # segundos extra al final del resto
 COMENTA_SEG = 3.0                    # "Comenta" los últimos N s del vídeo de YouTube
 TEXTO_SIGUIENTE = "Continúa en mi perfil"   # al final de los cortes intermedios ("" para quitarlo)
 SIGUIENTE_PARTE_SEG = 2.5
+
+# Cortes automáticos: si la nota no trae «Mapa de cortes» (o es un texto normal), la app parte la historia
+# ella sola: shorts de la duración objetivo que terminan en un punto de suspense (…, ?, :, «pero…», fin de sección).
+CORTE_OBJETIVO = 150        # s de voz que se buscan por short (los hechos a mano rondaban 2:20-3:20)
+CORTE_MIN = 61              # TikTok solo paga los vídeos de más de 1 minuto
+CORTE_MAX = 170             # YouTube trata como Short hasta 3:00 (se deja margen para la cola)
+FINAL_SOLO_YOUTUBE = 0.2    # parte final de la historia que no sale en los shorts («El FINAL en YouTube»); 0 = entera
+SEG_POR_LETRA = 0.048       # para estimar la voz antes de generarla (calibrado con la caché, voz a +25 %)
+SEG_POR_FRASE = 0.26
 
 # Subtítulos
 FUENTE_SUBS = "Arial Black"
@@ -182,6 +191,7 @@ class Linea:
     pcm: bytes = b""          # audio ya compactado (sin silencios sobrantes)
     dur: float = 0.0          # duración útil (recortado el silencio final)
     limites: list = field(default_factory=list)  # [(texto, ini, dur)] de edge-tts
+    fin_parrafo: bool = False  # última frase de un párrafo (solo en texto normal): buen sitio para cortar
 
 
 @dataclass
@@ -201,6 +211,8 @@ class Corte:
     desde: int
     hasta: int
     fondo: str = ""   # temática de fondo de ese short, si la nota la indica
+    lineas: tuple = ()  # corte automático: (primera, última + 1) contando todas las líneas de la historia
+    seg: float = 0.0    # corte automático: duración estimada de la voz
 
 
 @dataclass
@@ -345,6 +357,48 @@ def escenas_clips(lineas):
     return [escenas[n] for n in sorted(escenas) if escenas[n].lineas]
 
 
+RE_SECCION_HISTORIA = re.compile(r"^#{1,3}\s*(historia|texto|relato)\b", re.I)
+RE_CAPITULO = re.compile(r"(parte|cap[ií]tulo|part|chapter)\s+\d+\b(?!.*[.!?…]$)", re.I)  # «PARTE 2/8 · El giro»
+RE_FRASE = re.compile(r"(?<=[.!?…])\s+(?=[¿¡«\"“(—–-]?[A-ZÁÉÍÓÚÜÑ0-9])")
+RE_PEGADO = re.compile(r"(?<=[a-záéíóúüñ][.!?…])(?=[¿¡«]?[A-ZÁÉÍÓÚÜÑ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ])")  # «rojo.Todavía» (no «EE.UU.»)
+
+
+def escenas_texto(lineas):
+    """Texto normal (una historia pegada tal cual, un .txt, una nota de 01_Historias…): cada sección con
+    título (#) es una escena y cada frase, una línea de voz. Si hay una sección «Historia…», se lee desde ahí."""
+    inicio = next((i + 1 for i, l in enumerate(lineas) if RE_SECCION_HISTORIA.match(l.strip())), 0)
+    escenas, actual, seccion, en_codigo = [], None, "", False
+    # texto pegado de la web: 3+ espacios = salto de párrafo perdido, y «frase.Otra» sin espacio
+    parrafos = [p for raw in lineas[inicio:] for p in re.split(r"\s{3,}", RE_PEGADO.sub(" ", raw.strip()))]
+    for l in parrafos:
+        if l.startswith("```"):
+            en_codigo = not en_codigo
+            continue
+        if re.match(r"#{1,6}\s", l):
+            actual, seccion = None, l.lstrip("#").strip()  # título de sección: no se lee, abre escena nueva
+            continue
+        if en_codigo or not l or l.startswith(("|", ">", "![[", "<!--")) or re.fullmatch(r"[-*_]{3,}|\(.*\)|\[.*\]", l):
+            continue  # tablas, citas, separadores y notas entre paréntesis o corchetes
+        l = re.sub(r"^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s*)?", "", l)       # viñetas, listas y casillas
+        l = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]", r"\1", l)           # [[nota|texto]] -> texto
+        ultima = None
+        for f in RE_FRASE.split(l):
+            if len(f) <= 120 and RE_CAPITULO.match(f):  # «PARTE 2/8 · El giro» sin «#»: también abre sección
+                actual, seccion = None, f.strip()
+                continue
+            texto_tts, palabras = parsear_linea_narracion(f)
+            if not palabras:
+                continue
+            if actual is None:
+                actual = Escena(len(escenas) + 1, seccion, "", [], [])
+                escenas.append(actual)
+            ultima = Linea(texto_tts, palabras)
+            actual.lineas.append(ultima)
+        if ultima:
+            ultima.fin_parrafo = True
+    return escenas
+
+
 def marcar(escena, frases, atributo):
     """Pone atributo=True (clave o negrita) en las palabras que forman cada frase."""
     for frase in frases:
@@ -386,27 +440,150 @@ def cortes_de_tablas(lineas):
     return [cortes[k] for k in sorted(cortes)]
 
 
+# ── Cortes automáticos ───────────────────────────────────────────────────
+
+RE_GIRO = re.compile(r"^(pero|entonces|y entonces|de repente|hasta que|fue entonces|sin embargo|en ese momento|"
+                     r"justo entonces|y ahí|lo que no sabía|resulta que)\b", re.I)
+
+
+def estimar_voz(linea: Linea):
+    """Duración de la voz: la real si ya está generada; si no, estimada por el número de letras."""
+    return linea.dur or SEG_POR_LETRA * len(re.sub(r"\W", "", linea.texto_tts)) + SEG_POR_FRASE
+
+
+def linea_de_tiempo_estimada(escenas):
+    """[(línea, escena, ¿acaba escena?)] y el instante estimado en que empieza cada una (+ el total al final)."""
+    seq = [(l, e, k == len(e.lineas) - 1) for e in escenas for k, l in enumerate(e.lineas)]
+    t = [0.0]
+    for l, _, fin_escena in seq:
+        t.append(t[-1] + estimar_voz(l) + (PAUSA_ESCENA if fin_escena else pausa_tras(l)))
+    return seq, t
+
+
+def suspense(linea: Linea, fin_escena, siguiente):
+    """Lo bueno que es terminar un short justo después de esta línea."""
+    fin = linea.texto_tts.rstrip(" \"”»')")
+    p = 3.0 if fin_escena else (1.0 if linea.fin_parrafo else 0.0)
+    if fin.endswith(("…", "...")):
+        p += 3
+    elif fin.endswith(("?", ":")):
+        p += 2
+    elif fin.endswith("!"):
+        p += 1
+    elif not fin.endswith("."):
+        p -= 3  # frase a medias
+    if len(linea.palabras) <= 6 and (fin_escena or linea.fin_parrafo):
+        p += 1  # remate corto: «Eso fue mi primer error.»
+    if any(w.negrita for w in linea.palabras):
+        p += 1  # frase con zoom
+    if siguiente is not None and RE_GIRO.match(siguiente.texto_tts.lstrip("«\"“¿¡—–- ")):
+        p += 2  # lo siguiente es un giro: mejor dejarlo para el próximo short
+    return p
+
+
+def cortes_automaticos(escenas, semilla=""):
+    """Parte la historia en shorts de ~CORTE_OBJETIVO s que acaban en suspense, y deja el último
+    FINAL_SOLO_YOUTUBE de la historia para YouTube. Programación dinámica sobre los huecos entre frases."""
+    seq, t = linea_de_tiempo_estimada(escenas)
+    n, total = len(seq), t[-1]
+    if n < 2:
+        return []
+    bono = [suspense(l, fin, seq[i + 1][0] if i + 1 < n else None) for i, (l, _, fin) in enumerate(seq)]
+    meta, margen = total * (1 - FINAL_SOLO_YOUTUBE), total * 0.1
+    finales = [j for j in range(1, n) if abs(t[j] - meta) <= margen] if FINAL_SOLO_YOUTUBE else [n]
+
+    # ponytail: O(n·frases por short); de sobra para historias de una hora
+    for minimo, maximo in ((CORTE_MIN, CORTE_MAX), (0, CORTE_MAX), (0, float("inf"))):
+        mejor, previo = [0.0] + [float("inf")] * n, [0] * (n + 1)
+        for j in range(1, n + 1):
+            for i in range(j - 1, -1, -1):
+                d = t[j] - t[i]
+                if d > maximo:
+                    break
+                c = mejor[i] + ((d - CORTE_OBJETIVO) / 20) ** 2 - bono[j - 1]
+                if d >= minimo and c < mejor[j]:
+                    mejor[j], previo[j] = c, i
+        validos = [j for j in finales if mejor[j] < float("inf")]
+        if validos:
+            break
+    else:
+        return []
+    # el corte que da paso a «El FINAL en YouTube» cuenta doble y conviene que caiga cerca de la meta
+    j = min(validos, key=lambda j: mejor[j] - (bono[j - 1] if FINAL_SOLO_YOUTUBE else 0) + ((t[j] - meta) / margen) ** 2)
+    tramos = []
+    while j > 0:
+        tramos.insert(0, (previo[j], j))
+        j = previo[j]
+
+    # un único tema de fondo por short, distinto del anterior (el de sus escenas, si tiene clips)
+    temas = [e for e in ETIQUETAS if clips_de(e)]
+    random.Random(semilla).shuffle(temas)
+    cortes, anterior = [], ""
+    for k, (i, j) in enumerate(tramos, 1):
+        propios = [e.etiqueta for _, e, _ in seq[i:j] if e.etiqueta and clips_de(e.etiqueta)]
+        tema = next((x for x in propios + temas[k:] + temas[:k] if x != anterior), anterior)
+        cortes.append(Corte(k, len(tramos), seq[i][1].num, seq[j - 1][1].num, tema, (i, j), t[j] - t[i]))
+        anterior = tema
+    return cortes
+
+
+def escenas_del_corte(g: Guion, c: Corte):
+    """Escenas de un short; en los cortes automáticos, recortadas a sus frases."""
+    if not c.lineas:
+        return [e for e in g.escenas if c.desde <= e.num <= c.hasta]
+    out, k = [], 0
+    for e in g.escenas:
+        dentro = [l for i, l in enumerate(e.lineas, k) if c.lineas[0] <= i < c.lineas[1]]
+        k += len(e.lineas)
+        if dentro:
+            out.append(replace(e, lineas=dentro))
+    return out
+
+
+def mmss(s):
+    return f"{int(s // 60)}:{int(s % 60):02d}"
+
+
+def solo_youtube(g: Guion):
+    """Escenas que la tabla de cortes deja fuera de los shorts (normalmente el final): solo van en YouTube."""
+    if not g.cortes or g.cortes[0].lineas:
+        return []
+    return [e.num for e in g.escenas if not any(c.desde <= e.num <= c.hasta for c in g.cortes)]
+
+
+def lista(nums):
+    """[7, 8] -> «7 y 8»"""
+    nums = [str(n) for n in nums]
+    return " y ".join([", ".join(nums[:-1]), nums[-1]] if len(nums) > 1 else nums)
+
+
 def parsear_guion(ruta: Path) -> Guion:
     txt = ruta.read_text(encoding="utf-8")
     txt = re.sub(r"^---\n.*?\n---\n", "", txt, count=1, flags=re.S)  # frontmatter
     lineas = txt.splitlines()
+    escenas = escenas_guion(lineas) or escenas_clips(lineas)
+    texto_normal = not escenas
+    if texto_normal:
+        escenas = escenas_texto(lineas)
 
     # Título de la tarjeta
-    m = re.search(r"con el t[íi]tulo:?\s*[\"“«]([^\"”»]+)[\"”»]", txt, re.I)
-    if m:
-        titulo = m.group(1)
+    if texto_normal:
+        m = re.search(r"^#\s+(.+)", txt, re.M)  # «# Título» del texto
     else:
-        m = re.search(r"###\s*YouTube.*?\*\*T[íi]tulo:\*\*\s*(.+)", txt, re.S | re.I)
-        titulo = m.group(1).strip() if m else ruta.stem
+        m = (re.search(r"con el t[íi]tulo:?\s*[\"“«]([^\"”»]+)[\"”»]", txt, re.I)
+             or re.search(r"###\s*YouTube.*?\*\*T[íi]tulo:\*\*\s*(.+)", txt, re.S | re.I))
+    if m:
+        titulo = m.group(1).strip()
+    else:  # 2026-10-01_P001_la-reforma-de-mi-cunado -> La reforma de mi cunado
+        titulo = re.sub(r"^\d{4}-\d{2}-\d{2}_([^_]+_)?", "", ruta.stem).replace("-", " ").replace("_", " ").strip().capitalize()
     titulo = sin_emojis(titulo)
 
-    escenas = escenas_guion(lineas) or escenas_clips(lineas)
     for esc in escenas:
         marcar(esc, esc.claves, "clave")
         marcar(esc, esc.zoom, "negrita")
 
     slug = re.sub(r"_(guion|clips)_?", "_", ruta.stem)
-    return Guion(ruta, slug, titulo, escenas, cortes_de_tablas(lineas))
+    return Guion(ruta, slug, titulo, escenas, cortes_de_tablas(lineas) or cortes_automaticos(escenas, slug))
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -1166,11 +1343,16 @@ def montar(nombre, W, H, tramos, voz_wav: Path, ass_path: Path, total, salida: P
 #  6. Programa principal
 # ──────────────────────────────────────────────────────────────────────────
 
+def guiones_de(carpeta: Path):
+    """Notas .md y textos .txt de la carpeta, el más reciente primero."""
+    if not carpeta.is_dir():
+        return []
+    return sorted((p for p in carpeta.iterdir() if p.suffix.lower() in (".md", ".txt")),
+                  key=lambda p: p.stat().st_mtime, reverse=True)
+
+
 def ultimo_guion():
-    if not CARPETA_GUIONES.is_dir():
-        return None
-    mds = sorted(CARPETA_GUIONES.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return mds[0] if mds else None
+    return next(iter(guiones_de(CARPETA_GUIONES)), None)
 
 
 def preparar_carpetas():
@@ -1184,13 +1366,24 @@ def resumen(g: Guion):
     log(f"\n📄 {g.ruta.name}")
     log(f"   Título tarjeta: {g.titulo}")
     for e in g.escenas:
-        n = len(clips_de(e.etiqueta)) if e.etiqueta else 0
-        aviso = "" if n else "  ⚠️ sin clips en esa carpeta"
+        aviso = "  ⚠️ sin clips en esa carpeta" if e.etiqueta and not clips_de(e.etiqueta) else ""
         log(f"   Escena {e.num:>2} {('· ' + e.titulo[:34]) if e.titulo else '':<36} [{e.etiqueta or '—'}] {len(e.lineas)} líneas"
             f"{'  claves: ' + ', '.join(e.claves) if e.claves else ''}{aviso}")
-    if g.cortes:
+    if g.cortes and g.cortes[0].lineas:
+        seq, t = linea_de_tiempo_estimada(g.escenas)
+        log(f"   ✂️  Cortes automáticos (~{mmss(t[-1])} de voz en total):")
+        for c in g.cortes:
+            a, b = seq[c.lineas[0]][0].texto_tts, seq[c.lineas[1] - 1][0].texto_tts
+            log(f"   ✂️  Short {c.parte}/{c.total} · ~{mmss(c.seg)} · «{a[:38]}…» → «…{b[-60:]}»"
+                + (f"  [{c.fondo}]" if c.fondo else ""))
+        resto = t[-1] - t[g.cortes[-1].lineas[1]]
+        if resto > 1:
+            log(f"   🎬 Solo en YouTube: el final (~{mmss(resto)})")
+    elif g.cortes:
         for c in g.cortes:
             log(f"   ✂️  Short {c.parte}/{c.total}: escenas {c.desde}→{c.hasta}" + (f"  [{c.fondo}]" if c.fondo else ""))
+        if fuera := solo_youtube(g):
+            log(f"   🎬 Solo en YouTube (así lo dice el «Mapa de cortes»): escena{'s' * (len(fuera) > 1)} {lista(fuera)}")
     else:
         log("   ⚠️ No encuentro 'Mapa de cortes': solo se hará el vídeo de YouTube.")
     log("")
@@ -1202,7 +1395,7 @@ def main(argv=None):
     except Exception:
         pass
     ap = argparse.ArgumentParser(description="Guion de Obsidian → vídeos de historias de Reddit")
-    ap.add_argument("guion", nargs="?", help="Ruta al .md (por defecto, el último de la carpeta de guiones)")
+    ap.add_argument("guion", nargs="?", help="Ruta al .md o .txt (por defecto, el último de la carpeta de guiones)")
     ap.add_argument("--solo", default="todo", help="todo | youtube | cortes | parte1 | parte2 ...")
     ap.add_argument("--voz", help="por defecto, la voz al azar que se eligió para este proyecto")
     ap.add_argument("--velocidad", default=VELOCIDAD, help='p. ej. "+10%%"')
@@ -1221,7 +1414,7 @@ def main(argv=None):
 
     g = parsear_guion(ruta)
     if not g.escenas:
-        sys.exit("❌ No he encontrado escenas ('### ESCENA N · ...' con '**Narración:**').")
+        sys.exit("❌ No he encontrado texto que narrar en esa nota.")
     proyecto = datos_proyecto(g)
     g.titulo = proyecto["titulo"]
     voz = a.voz or proyecto["voz"]
@@ -1255,6 +1448,9 @@ def main(argv=None):
     cta = Linea(VOZ_FINAL_CORTE, parsear_linea_narracion(VOZ_FINAL_CORTE)[1]) if VOZ_FINAL_CORTE else None
     todas = [l for e in g.escenas for l in e.lineas] + [intro] + ([cta] if cta else [])
     generar_voces(todas, voz, a.velocidad, TONO)
+    if g.cortes and g.cortes[0].lineas:  # automáticos: se ajustan a la voz real (que ningún short pase de 3 min)
+        g.cortes = cortes_automaticos(g.escenas, g.slug)
+        log("✂️  Con la voz real: " + ", ".join(f"parte {c.parte} {mmss(c.seg)}" for c in g.cortes))
 
     semilla = a.semilla if a.semilla is not None else random.randrange(10 ** 6)
     solo = a.solo.lower().replace(" ", "")
@@ -1287,7 +1483,7 @@ def main(argv=None):
         if solo not in ("todo", "cortes", f"parte{c.parte}"):
             continue
         W, H = FORMATOS["vertical"]
-        escenas = [e for e in g.escenas if c.desde <= e.num <= c.hasta]
+        escenas = escenas_del_corte(g, c)
         if not escenas:
             log(f"⚠️  Short {c.parte}: no hay escenas {c.desde}→{c.hasta}")
             continue
