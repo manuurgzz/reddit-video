@@ -86,6 +86,8 @@ try:
     largo, cortos = au.videos(nota)
     assert largo and [p.name[-10:] for p in cortos] == ["Parte 1de3.mp4"[-10:], "Parte 2de3.mp4"[-10:], "Parte 3de3.mp4"[-10:]], cortos
     au.poner_estado(nota, "lista")
+    assert au.sin_terminar({**cfg, "youtube": False, "tiktok": False}) == [], "sin publicar nada, una nota lista no bloquea"
+    assert au.sin_terminar(cfg) == [nota], "si hay que publicarla, sigue en marcha"
 
     # ── 4 · Publicar: dos huecos al día; el vídeo largo va con el primer short
     subidas = []
@@ -96,7 +98,7 @@ try:
 
     au.subir_youtube = youtube_falso
     au.subir_tiktok = lambda video: subidas.append(("tt", video.name))
-    ahora = datetime.now().astimezone()
+    ahora = datetime.now().astimezone().replace(hour=12, minute=0, second=0, microsecond=0)  # hora fija: a medianoche fallaba
     cfg["horas_publicacion"] = [(ahora - timedelta(hours=1)).strftime("%H:%M"), (ahora + timedelta(minutes=30)).strftime("%H:%M")]
     h = au.huecos(cfg, ahora)
     assert h[0] == ahora and h[1] > ahora, "la hora que ya pasó se publica ya; la otra, programada"

@@ -324,6 +324,13 @@ def notas(*estados):
     return sorted(p for p in gv.guiones_de(gv.CARPETA_GUIONES) if gv.estado_nota(p) in estados)
 
 
+def sin_terminar(cfg):
+    """Historias de Gemini en las que el piloto aún tiene trabajo. Sin publicación activada, las que ya
+    tienen sus vídeos no cuentan (las subes tú): si contasen, el piloto no volvería a escribir nunca."""
+    estados = EN_MARCHA if cfg["youtube"] or cfg["tiktok"] else ("pendiente", "aprobada")
+    return [p for p in notas(*estados) if gv.campo(p, "origen") == "gemini"]
+
+
 def poner_estado(nota, estado, motivo=""):
     """Estado en el frontmatter de la nota y en su fila del Registro de Obsidian (si la tiene)."""
     gv.poner_campo(nota, "estado", estado)
@@ -615,7 +622,7 @@ def _pasada(cfg):
         hecho, fallos = [], []
 
         # 1 · Escribir
-        en_marcha = [p for p in notas(*EN_MARCHA) if gv.campo(p, "origen") == "gemini"]
+        en_marcha = sin_terminar(cfg)
         if len(en_marcha) < int(cfg["cola"]):
             try:
                 hecho.append(f"historia nueva: {gv.parsear_guion(nueva_historia(cfg)).titulo}")
@@ -623,7 +630,9 @@ def _pasada(cfg):
                 gv.log(f"❌ Gemini: {motivo(e)}")
                 fallos.append(f"Gemini: {motivo(e)[:120]}")
         else:
-            gv.log(f"   Ya hay {len(en_marcha)} historias en marcha: hoy no se escribe otra.")
+            n = len(en_marcha)
+            gv.log(f"   Ya hay {n} historia{'s' * (n > 1)} sin terminar ({', '.join(sorted({gv.estado_nota(p) for p in en_marcha}))}): "
+                   f"no se escribe otra hasta que avance. Para tener más a la vez, sube «Historias en marcha».")
 
         # 3 · Crear los vídeos de la nota aprobada más antigua
         for nota in notas("aprobada")[:1]:
