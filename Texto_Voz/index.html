@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Texto a Voz</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600&family=Schibsted+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --paper: #eceef2; --sheet: #ffffff; --ink: #161a2c; --muted: #626a80; --line: #d3d8e2;
+      --cobalt: #2b45e8; --marker: #ffe45c; --marker-ink: #161a2c;
+      --bar: #161a2c; --bar-ink: #f2f3f7; --bar-line: rgba(242, 243, 247, .22); --danger: #c4291c;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --paper: #12141c; --sheet: #1a1d28; --ink: #e9ebf2; --muted: #8e95aa; --line: #2c3142;
+        --cobalt: #7d8dff; --marker: #f5d63d; --bar: #232736; --danger: #b8332a;
+        color-scheme: dark;
+      }
+    }
+    :root[data-theme="dark"] {
+      --paper: #12141c; --sheet: #1a1d28; --ink: #e9ebf2; --muted: #8e95aa; --line: #2c3142;
+      --cobalt: #7d8dff; --marker: #f5d63d; --bar: #232736; --danger: #b8332a;
+      color-scheme: dark;
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body {
+      margin: 0; background: var(--paper); color: var(--ink);
+      font: 400 16px/1.5 "Schibsted Grotesk", system-ui, sans-serif;
+    }
+    :focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+    button { font: inherit; color: inherit; cursor: pointer; }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    svg { flex: none; }
+
+    .app { max-width: 1180px; margin: 0 auto; padding: 20px 16px 150px; }
+    .top { display: flex; align-items: center; justify-content: space-between; padding-bottom: 20px; }
+    .brand { margin: 0; font: 600 1.375rem/1.2 Literata, Georgia, serif; letter-spacing: -.01em; }
+    .icon-btn {
+      width: 40px; height: 40px; display: grid; place-items: center;
+      border: 1px solid var(--line); border-radius: 999px; background: transparent;
+    }
+
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 40px; align-items: start; }
+
+    /* Hoja de guion: textarea para editar, lector con resaltado mientras suena */
+    .sheet {
+      display: flex; flex-direction: column; padding: 36px 44px 14px;
+      background: var(--sheet); border: 1px solid var(--line); border-radius: 4px;
+      box-shadow: 0 18px 40px -30px rgba(22, 26, 44, .45);
+    }
+    .sheet:focus-within { border-color: var(--cobalt); }
+    .script {
+      display: block; width: 100%; max-width: 68ch; margin: 0; padding: 0;
+      height: clamp(320px, calc(100vh - 290px), 820px); overflow-y: auto; position: relative;
+      font: 400 1.3125rem/1.7 Literata, Georgia, serif; color: var(--ink);
+      white-space: pre-wrap; overflow-wrap: anywhere;
+    }
+    textarea.script { border: 0; background: transparent; resize: none; outline: none; }
+    textarea.script::placeholder { color: var(--muted); }
+    .reader span {
+      border-radius: 3px; cursor: pointer;
+      box-decoration-break: clone; -webkit-box-decoration-break: clone;
+      transition: background-color .12s, color .12s;
+    }
+    .reader span:hover { text-decoration: underline 1px var(--muted); text-underline-offset: 5px; }
+    .reader .said { color: var(--muted); }
+    .reader .now { background: var(--marker); color: var(--marker-ink); box-shadow: 0 0 0 2px var(--marker); }
+    .sheet-foot {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--line);
+      font-size: .875rem; color: var(--muted); font-variant-numeric: tabular-nums;
+    }
+    .sheet-foot .over { color: var(--danger); font-weight: 600; }
+    .text-btn { background: none; border: 0; padding: 6px 4px; font-weight: 500; color: var(--cobalt); }
+    .foot-actions { display: flex; gap: 12px; }
+
+    /* Panel de voz */
+    .panel { display: flex; flex-direction: column; gap: 32px; }
+    .panel h2 { margin: 0 0 10px; font-size: 1rem; font-weight: 600; }
+    select {
+      width: 100%; padding: 10px 36px 10px 12px; appearance: none;
+      font: inherit; color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+      background: var(--sheet) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='none' stroke='%23626a80' stroke-width='1.6'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E") no-repeat right 14px center;
+    }
+    .voices { display: flex; flex-direction: column; gap: 2px; max-height: 300px; overflow-y: auto; margin: 10px 0 0; padding: 0; border: 0; }
+    .voice {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+      padding: 10px 12px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; position: relative;
+    }
+    .voice input { position: absolute; opacity: 0; pointer-events: none; }
+    .voice:hover { background: var(--sheet); }
+    .voice:has(input:checked) { background: var(--sheet); border-color: var(--cobalt); }
+    .voice:has(input:checked) .voice-name { color: var(--cobalt); }
+    .voice:has(input:focus-visible) { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+    .voice-name { font-weight: 600; }
+    .voice-meta { font-size: .8125rem; color: var(--muted); text-align: right; }
+    .empty { margin: 10px 0 0; font-size: .875rem; color: var(--muted); }
+
+    .slider + .slider { margin-top: 20px; }
+    .slider-head { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: .9375rem; }
+    .slider output { color: var(--muted); font-variant-numeric: tabular-nums; }
+    input[type="range"] { width: 100%; margin: 0; accent-color: var(--cobalt); }
+    .hint { margin: 12px 0 0; font-size: .8125rem; color: var(--muted); }
+
+    /* Barra de reproducción */
+    .transport { position: fixed; inset: auto 0 0 0; z-index: 10; background: var(--bar); color: var(--bar-ink); }
+    .transport :focus-visible { outline-color: var(--marker); }
+    #alert { margin: 0; padding: 10px 16px; background: var(--danger); color: #fff; text-align: center; font-size: .9375rem; }
+    .transport-inner {
+      max-width: 1180px; margin: 0 auto; padding: 14px 16px;
+      display: grid; grid-template-columns: auto 1fr auto; gap: 24px; align-items: center;
+    }
+    .buttons { display: flex; gap: 8px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 11px 20px; border: 1px solid transparent; border-radius: 999px; font-weight: 600;
+    }
+    .btn-play { min-width: 156px; background: var(--marker); color: var(--marker-ink); }
+    .btn-ghost { background: transparent; border-color: var(--bar-line); }
+    .timeline { display: flex; align-items: center; gap: 12px; font-size: .875rem; font-variant-numeric: tabular-nums; opacity: .85; }
+    .timeline input { flex: 1; accent-color: var(--marker); }
+    .spin { animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 860px) {
+      .layout { grid-template-columns: 1fr; gap: 28px; }
+      .sheet { padding: 24px 20px 12px; }
+      .script { height: clamp(260px, 52vh, 600px); font-size: 1.1875rem; }
+      .app { padding-bottom: 180px; }
+      .transport-inner { grid-template-columns: 1fr auto; gap: 10px 12px; padding: 12px 16px; }
+      .timeline { grid-column: 1 / -1; order: 3; }
+    }
+    @media (max-width: 480px) {
+      .btn .lbl-opt { display: none; }
+      .btn-ghost { padding: 11px 13px; }
+      .btn-play { min-width: 0; flex: 1; }
+      .buttons { flex: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .reader span { transition: none; }
+      .spin { animation-duration: 2.4s; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <h1 class="brand">Texto a Voz</h1>
+    <button id="theme" class="icon-btn" type="button" aria-label="Cambiar tema claro u oscuro">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+  </header>
+
+  <main class="layout">
+    <section class="sheet" aria-label="Texto">
+      <textarea id="text" class="script" aria-label="Texto para leer en voz alta"
+        placeholder="Escribe o pega aquí el texto que quieres escuchar."></textarea>
+      <div id="reader" class="script reader" hidden></div>
+      <div class="sheet-foot">
+        <span id="count">0 / 10.000 caracteres</span>
+        <div class="foot-actions">
+          <button id="sample" class="text-btn" type="button">Probar con un ejemplo</button>
+          <button id="clear" class="text-btn" type="button" hidden>Borrar texto</button>
+          <button id="edit" class="text-btn" type="button" hidden>Editar texto</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <div>
+        <h2>Voz</h2>
+        <select id="lang" aria-label="Idioma" disabled><option>Cargando idiomas…</option></select>
+        <fieldset id="voices" class="voices" aria-label="Voces disponibles"></fieldset>
+      </div>
+
+      <div>
+        <h2>Ajustes</h2>
+        <div class="slider">
+          <div class="slider-head"><label for="rate">Velocidad</label><output id="rateOut" for="rate">1,00×</output></div>
+          <input id="rate" type="range" min="-50" max="100" step="5" value="0">
+        </div>
+        <div class="slider">
+          <div class="slider-head"><label for="pitch">Tono</label><output id="pitchOut" for="pitch">Normal</output></div>
+          <input id="pitch" type="range" min="-50" max="50" step="5" value="0">
+        </div>
+        <div class="slider">
+          <div class="slider-head"><label for="volume">Volumen</label><output id="volumeOut" for="volume">100 %</output></div>
+          <input id="volume" type="range" min="0" max="100" step="5" value="100">
+        </div>
+        <p class="hint">Haz clic en cualquier palabra mientras suena para saltar a ella. Ctrl + Enter reproduce.</p>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<div class="transport">
+  <p id="alert" role="alert" hidden></p>
+  <div class="transport-inner">
+    <div class="buttons">
+      <button id="play" class="btn btn-play" type="button"></button>
+      <button id="stop" class="btn btn-ghost" type="button" aria-label="Detener" disabled>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+        <span class="lbl-opt">Detener</span>
+      </button>
+    </div>
+    <div class="timeline">
+      <span id="elapsed">0:00</span>
+      <input id="seek" type="range" min="0" max="0" step="0.01" value="0" aria-label="Posición del audio" disabled>
+      <span id="duration">0:00</span>
+    </div>
+    <button id="download" class="btn btn-ghost" type="button" aria-label="Descargar MP3">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+      <span class="lbl-opt">Descargar MP3</span>
+    </button>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const ui = {
+    text: $('text'), reader: $('reader'), count: $('count'), sample: $('sample'), clear: $('clear'), edit: $('edit'),
+    lang: $('lang'), voices: $('voices'), rate: $('rate'), pitch: $('pitch'), volume: $('volume'),
+    rateOut: $('rateOut'), pitchOut: $('pitchOut'), volumeOut: $('volumeOut'),
+    play: $('play'), stop: $('stop'), seek: $('seek'), elapsed: $('elapsed'), duration: $('duration'),
+    download: $('download'), alert: $('alert'), theme: $('theme'),
+  };
+  const MAX_CHARS = 10000;
+  const OFFLINE = 'No hay conexión con el servidor. Arranca la app con «python server.py» y abre http://localhost:8000.';
+  const SAMPLE = 'Había una vez un faro en lo alto de un acantilado. Cada noche, su luz recorría el mar en círculos lentos, '
+    + 'y los barcos que volvían a puerto sabían que estaban cerca de casa.\n\nEsta frase la está leyendo una voz neuronal. '
+    + 'Prueba a cambiar la voz, la velocidad o el tono y vuelve a reproducir.';
+  const ICONS = {
+    play: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z"/></svg>',
+    pause: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>',
+    load: '<svg class="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 1-9 9"/></svg>',
+  };
+
+  const audio = new Audio();
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  let voices = [];
+  let clip = null;     // último audio generado: { key, url, text, words: [[segundo, inicio, fin], ...] }
+  let state = 'idle';  // idle | loading | playing | paused
+  let wordEls = [];
+  let current = -1;
+  let lastTop = null;
+
+  // ---------- Utilidades ----------
+  const fmtTime = (s) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '0:00');
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  function showError(msg) {
+    ui.alert.textContent = msg || '';
+    ui.alert.hidden = !msg;
+  }
+
+  async function api(path, options) {
+    let res, data;
+    try {
+      res = await fetch(path, options);
+      data = await res.json();
+    } catch {
+      throw new Error(OFFLINE);
+    }
+    if (!res.ok) throw new Error(data.error || `Error ${res.status} del servidor.`);
+    return data;
+  }
+
+  // Ejecuta una acción mostrando su error en la barra y volviendo a un estado usable.
+  async function guarded(fn) {
+    showError('');
+    try {
+      await fn();
+    } catch (err) {
+      if (err.name === 'NotAllowedError') showError('El navegador bloqueó la reproducción. Pulsa Reproducir otra vez.');
+      else showError(err.message);
+      if (state === 'loading') setState('idle');
+    }
+  }
+
+  // ---------- Estado de la interfaz ----------
+  function setState(next) {
+    state = next;
+    const btn = {
+      idle: [ICONS.play, 'Reproducir'], loading: [ICONS.load, 'Generando…'],
+      playing: [ICONS.pause, 'Pausar'], paused: [ICONS.play, 'Reanudar'],
+    }[next];
+    ui.play.innerHTML = `${btn[0]}<span>${btn[1]}</span>`;
+    ui.play.disabled = next === 'loading';
+    ui.stop.disabled = next === 'idle' || next === 'loading';
+    ui.seek.disabled = next === 'idle' || next === 'loading';
+    ui.download.disabled = next === 'loading';
+
+    const reading = next !== 'idle';
+    ui.text.hidden = reading;
+    ui.reader.hidden = !reading;
+    ui.edit.hidden = next !== 'playing' && next !== 'paused';
+    updateFoot();
+    if (next === 'playing') requestAnimationFrame(tick);
+  }
+
+  function updateFoot() {
+    const n = ui.text.value.length;
+    ui.count.textContent = `${n.toLocaleString('es-ES')} / ${MAX_CHARS.toLocaleString('es-ES')} caracteres`;
+    ui.count.classList.toggle('over', n > MAX_CHARS);
+    const editing = state === 'idle';
+    ui.sample.hidden = !editing || n > 0;
+    ui.clear.hidden = !editing || n === 0;
+  }
+
+  // ---------- Voces ----------
+  function langLabel(locale) {
+    try {
+      const name = new Intl.DisplayNames(['es'], { type: 'language' }).of(locale) || locale;
+      return name.charAt(0).toUpperCase() + name.slice(1);
+    } catch {
+      return locale;
+    }
+  }
+
+  async function loadVoices() {
+    try {
+      voices = await api('/api/voices');
+      if (!voices.length) throw new Error('El servicio no devolvió ninguna voz. Recarga la página en unos segundos.');
+    } catch (err) {
+      ui.lang.innerHTML = '<option>Sin voces</option>';
+      showError(err.message);
+      return;
+    }
+    const locales = [...new Set(voices.map((v) => v.locale))]
+      .map((l) => [l, langLabel(l)])
+      .sort((a, b) => a[1].localeCompare(b[1], 'es'));
+    ui.lang.innerHTML = locales.map(([l, name]) => `<option value="${l}">${name}</option>`).join('');
+
+    const saved = voices.find((v) => v.id === store.get('voice'));
+    // Idioma del navegador: coincidencia exacta, luego la variante "principal" (es -> es-ES), luego cualquiera.
+    const has = (l) => locales.some(([x]) => x === l);
+    const prefs = [...(navigator.languages || []), navigator.language, 'es-ES'].filter(Boolean);
+    const locale = saved?.locale
+      || prefs.find(has)
+      || prefs.map((p) => `${p.split('-')[0]}-${p.split('-')[0].toUpperCase()}`).find(has)
+      || prefs.map((p) => locales.find(([l]) => l.startsWith(`${p.split('-')[0]}-`))?.[0]).find(Boolean)
+      || locales[0][0];
+    ui.lang.value = locale;
+    ui.lang.disabled = false;
+    fillVoices(saved?.id);
+  }
+
+  function fillVoices(preferredId) {
+    const list = voices.filter((v) => v.locale === ui.lang.value);
+    ui.voices.replaceChildren(...list.map((v) => {
+      const raw = v.id.slice(v.locale.length + 1).replace(/Neural$/, '');
+      const multi = raw.includes('Multilingual');
+      const label = document.createElement('label');
+      label.className = 'voice';
+      label.innerHTML = `<input type="radio" name="voice"><span class="voice-name"></span><span class="voice-meta"></span>`;
+      label.querySelector('input').value = v.id;
+      label.querySelector('.voice-name').textContent = raw.replace('Multilingual', '');
+      label.querySelector('.voice-meta').textContent =
+        (v.gender === 'Female' ? 'Femenina' : 'Masculina') + (multi ? ', multilingüe' : '');
+      return label;
+    }));
+    const target = ui.voices.querySelector(`input[value="${CSS.escape(preferredId || '')}"]`)
+      || ui.voices.querySelector('input');
+    if (target) target.checked = true;
+  }
+
+  const selectedVoice = () => ui.voices.querySelector('input:checked')?.value || '';
+
+  // ---------- Generación ----------
+  function currentSettings() {
+    return { text: ui.text.value.trim(), voice: selectedVoice(), rate: Number(ui.rate.value), pitch: Number(ui.pitch.value) };
+  }
+
+  // Devuelve el audio de los ajustes actuales, generándolo solo si algo cambió.
+  async function ensureClip() {
+    const s = currentSettings();
+    if (!s.text) { ui.text.focus(); throw new Error('Escribe algún texto antes de reproducir.'); }
+    if (s.text.length > MAX_CHARS) throw new Error(`El texto supera el máximo de ${MAX_CHARS.toLocaleString('es-ES')} caracteres.`);
+    if (!s.voice) throw new Error('Elige una voz en el panel de la derecha.');
+    const key = JSON.stringify(s);
+    if (clip?.key === key) return clip;
+
+    setState('loading');
+    renderReader(s.text, []);
+    const data = await api('/api/tts', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s),
+    });
+    const blob = await (await fetch(`data:audio/mpeg;base64,${data.audio}`)).blob();
+    if (clip) URL.revokeObjectURL(clip.url);
+    clip = { key, url: URL.createObjectURL(blob), text: s.text, words: data.words };
+    audio.src = clip.url;
+    await new Promise((resolve, reject) => {
+      audio.onloadedmetadata = resolve;
+      audio.onerror = () => reject(new Error('El navegador no pudo leer el audio generado.'));
+    });
+    audio.onloadedmetadata = audio.onerror = null;
+    renderReader(clip.text, clip.words);
+    return clip; // queda en 'loading': quien llama decide el siguiente estado
+  }
+
+  // ---------- Lector con resaltado ----------
+  function renderReader(text, words) {
+    const frag = document.createDocumentFragment();
+    wordEls = [];
+    let pos = 0;
+    words.forEach(([, start, end], i) => {
+      frag.append(text.slice(pos, start));
+      const span = document.createElement('span');
+      span.textContent = text.slice(start, end);
+      span.dataset.i = i;
+      wordEls.push(span);
+      frag.append(span);
+      pos = end;
+    });
+    frag.append(text.slice(pos));
+    ui.reader.replaceChildren(frag);
+    ui.reader.scrollTop = 0;
+    current = -1;
+    lastTop = null;
+  }
+
+  // Índice de la última palabra que empieza antes de t (búsqueda binaria).
+  function wordAt(t) {
+    const w = clip?.words || [];
+    let lo = 0, hi = w.length - 1, found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (w[mid][0] <= t) { found = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return found;
+  }
+
+  function highlight(i) {
+    if (i === current) return;
+    if (i > current) for (let k = Math.max(current, 0); k < i; k++) wordEls[k].classList.add('said');
+    else for (let k = Math.max(i, 0); k < current; k++) wordEls[k].classList.remove('said');
+    wordEls[current]?.classList.remove('now');
+    const el = wordEls[i];
+    current = i;
+    if (!el) return;
+    el.classList.add('now');
+    if (el.offsetTop !== lastTop) { // solo desplaza al cambiar de línea
+      lastTop = el.offsetTop;
+      ui.reader.scrollTo({ top: el.offsetTop - ui.reader.clientHeight / 2.5, behavior: reduceMotion.matches ? 'auto' : 'smooth' });
+    }
+  }
+
+  function sync() {
+    ui.seek.max = audio.duration || 0;
+    ui.seek.value = audio.currentTime;
+    ui.elapsed.textContent = fmtTime(audio.currentTime);
+    ui.duration.textContent = fmtTime(audio.duration);
+    if (state !== 'idle' && state !== 'loading') highlight(wordAt(audio.currentTime));
+  }
+
+  function tick() {
+    sync();
+    if (state === 'playing') requestAnimationFrame(tick);
+  }
+
+  // ---------- Reproducción ----------
+  function togglePlay() {
+    if (state === 'playing') return audio.pause();
+    if (state === 'paused') return guarded(() => audio.play());
+    if (state === 'idle') return guarded(async () => { await ensureClip(); await audio.play(); });
+  }
+
+  function stop() {
+    setState('idle');
+    audio.pause();
+    if (audio.src) audio.currentTime = 0;
+    sync();
+  }
+
+  // Al cambiar voz, velocidad o tono mientras suena, regenera y continúa por el mismo punto.
+  async function settingsChanged() {
+    if (state !== 'playing' && state !== 'paused') return;
+    const resume = state === 'playing';
+    const fraction = audio.duration ? audio.currentTime / audio.duration : 0;
+    await guarded(async () => {
+      setState('loading');
+      audio.pause();
+      await ensureClip();
+      audio.currentTime = fraction * audio.duration;
+      if (resume) await audio.play();
+      else { setState('paused'); sync(); }
+    });
+  }
+
+  function download() {
+    return guarded(async () => {
+      const wasIdle = state === 'idle';
+      const c = await ensureClip();
+      if (wasIdle) setState('idle');
+      const name = c.text.split(/\s+/).slice(0, 6).join(' ')
+        .replace(/[^\p{L}\p{N} ]/gu, '').trim().replace(/\s+/g, '-').toLowerCase() || 'audio';
+      const a = document.createElement('a');
+      a.href = c.url;
+      a.download = `${name}.mp3`;
+      a.click();
+    });
+  }
+
+  audio.addEventListener('play', () => setState('playing'));
+  audio.addEventListener('pause', () => { if (state === 'playing') setState('paused'); });
+  audio.addEventListener('ended', stop);
+  audio.addEventListener('seeked', sync);
+  audio.addEventListener('loadedmetadata', sync);
+
+  // ---------- Eventos ----------
+  ui.play.addEventListener('click', togglePlay);
+  ui.stop.addEventListener('click', stop);
+  ui.download.addEventListener('click', download);
+  ui.edit.addEventListener('click', () => { stop(); ui.text.focus(); });
+  ui.seek.addEventListener('input', () => { audio.currentTime = Number(ui.seek.value); sync(); });
+  ui.reader.addEventListener('click', (e) => {
+    const i = e.target.dataset?.i;
+    if (i === undefined || !clip) return;
+    audio.currentTime = clip.words[i][0];
+    sync();
+  });
+
+  ui.text.addEventListener('input', () => { updateFoot(); showError(''); });
+  ui.sample.addEventListener('click', () => { ui.text.value = SAMPLE; updateFoot(); ui.text.focus(); });
+  ui.clear.addEventListener('click', () => { ui.text.value = ''; updateFoot(); ui.text.focus(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); togglePlay(); }
+  });
+
+  ui.lang.addEventListener('change', () => { fillVoices(); store.set('voice', selectedVoice()); settingsChanged(); });
+  ui.voices.addEventListener('change', () => { store.set('voice', selectedVoice()); settingsChanged(); });
+
+  const showRate = () => { ui.rateOut.textContent = `${(1 + ui.rate.value / 100).toFixed(2).replace('.', ',')}×`; };
+  const showPitch = () => {
+    const p = Number(ui.pitch.value);
+    ui.pitchOut.textContent = p === 0 ? 'Normal' : p > 0 ? `Más agudo (+${p})` : `Más grave (${p})`;
+  };
+  ui.rate.addEventListener('input', showRate);
+  ui.pitch.addEventListener('input', showPitch);
+  ui.rate.addEventListener('change', settingsChanged);
+  ui.pitch.addEventListener('change', settingsChanged);
+  ui.volume.addEventListener('input', () => {
+    audio.volume = ui.volume.value / 100;
+    ui.volumeOut.textContent = `${ui.volume.value} %`;
+  });
+
+  // ---------- Tema ----------
+  const savedTheme = store.get('theme');
+  if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+  ui.theme.addEventListener('click', () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    store.set('theme', root.dataset.theme);
+  });
+
+  // ---------- Inicio ----------
+  setState('idle');
+  loadVoices();
+</script>
+</body>
+</html>

@@ -31,7 +31,7 @@
 | 🎬 **Dos formatos a la vez** | Vídeo completo 16:9 con su `.srt` para YouTube y shorts 9:16: los del *Mapa de cortes* de la nota o, si no lo trae, calculados solos. |
 | ✂️ **Cortes automáticos** | Parte la historia en shorts de ~2:30 que acaban en un punto de suspense y deja el final para YouTube. |
 | 📋 **Cualquier texto** | Pega la historia tal cual en la app o abre un `.txt`: no hace falta ningún formato especial ni Obsidian. |
-| 🗣️ **Voz en off gratis** | Con [edge-tts](https://github.com/rany2/edge-tts). Once voces en español (España, México, EE. UU., Colombia y Argentina); cada proyecto sortea una y la recuerda. |
+| 🗣️ **Voz en off gratis** | Con el motor de **Texto a Voz** (incluida en `Texto_Voz\`, voces neuronales de Microsoft vía [edge-tts](https://github.com/rany2/edge-tts)). Once voces en español (España, México, EE. UU., Colombia y Argentina); cada proyecto sortea una y la recuerda. |
 | 💬 **Subtítulos palabra a palabra** | De 2 a 4 palabras por golpe, sincronizados con la voz, con zoom en las frases en **negrita** y palabras clave en amarillo. |
 | 🟧 **Tarjeta de Reddit** | El vídeo arranca con un post que imita uno real (`r/subreddit`, `u/usuario` y título), editable con vista previa. |
 | 🧼 **Fondos por temática** | Clips *satisfying* o de gameplay (`JABON`, `SLIME`, `ARENA`, `PINTURA`, `PRENSA`, `RUNNER`, `PARKOUR`, `CERA`), recortados o sobre fondo desenfocado según el formato. Un único tema por short. |
@@ -67,7 +67,7 @@ Los vídeos se guardan en `salida\<nombre del guion>\`.
 4. **Música (opcional).** Mete archivos `.mp3` en `musica\` (por ejemplo, de la YouTube Audio Library o Pixabay Music).
 5. **Historias.** No hace falta nada más: pulsa **＋ Pegar historia…** en la app y pega el texto tal cual. Si usas Obsidian, pulsa **Conectar Obsidian…** y elige tu bóveda (lee `02_Clips` o `03_Guiones`). También vale cualquier carpeta con `.md` o `.txt`, y en `guiones\` hay un ejemplo.
 
-A partir de ahí, basta con abrir **`crear_video.bat`**.
+A partir de ahí, basta con abrir **`crear_video.bat`**. Para convertir cualquier texto a audio sin hacer vídeo, abre **`texto_a_voz.bat`** (la web de Texto a Voz).
 
 <details>
 <summary><b>Instalación manual</b> (sin el <code>.bat</code>)</summary>
@@ -195,6 +195,7 @@ Todos los ajustes están en el bloque `CONFIGURACIÓN`, al principio de [`guion_
 
 | Ajuste | Para qué sirve |
 |---|---|
+| `CARPETA_TEXTO_VOZ` | Dónde está la app Texto a Voz, que genera la voz (por defecto, `Texto_Voz\` dentro del proyecto). |
 | `VOCES`, `VELOCIDAD`, `TONO` | Voces que entran en el sorteo y cómo suenan. |
 | `PAUSA_*` | Pausas entre líneas y escenas. |
 | `FUENTE_SUBS`, `PALABRAS_MAX`, `COLOR_CLAVE` | Aspecto de los subtítulos. |
@@ -213,6 +214,8 @@ reddit-video/
 ├── guion_a_video.py        # Motor: análisis del guion, cortes, voz, subtítulos y montaje
 ├── test_cortes.py          # Comprueba los cortes automáticos
 ├── automatizar.py          # Piloto automático: diseño, todavía sin implementar
+├── Texto_Voz/              # App Texto a Voz: su motor (voz.py) genera la voz en off; también tiene web propia
+├── texto_a_voz.bat         # Abre la web de Texto a Voz (http://localhost:8000)
 ├── crear_video.bat         # Abre la app
 ├── INSTALAR_Y_CREAR.bat    # Instala dependencias y abre la app
 ├── requirements.txt        # Dependencias de Python

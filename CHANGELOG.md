@@ -12,6 +12,7 @@ Todos los cambios relevantes del proyecto se documentan aquí. El formato sigue 
 - Banner y README reorganizado: características, diagrama del proceso, referencia de la línea de comandos y estructura del proyecto.
 
 ### Cambiado
+- La voz en off la genera el motor de la app Texto a Voz, ahora incluida en el repo (`Texto_Voz\`, con `texto_a_voz.bat` para abrir su web); se elimina el código propio de edge-tts y el ajuste de asyncio que dejará de existir en Python 3.16. La caché de voz se conserva.
 - La app indica qué escenas van solo en YouTube cuando la tabla de cortes no las incluye en ningún short.
 - Sin título en la nota, la tarjeta usa el nombre del archivo legible («La reforma de mi cunado») en vez del nombre tal cual.
 

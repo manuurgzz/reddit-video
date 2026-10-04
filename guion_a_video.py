@@ -14,7 +14,7 @@ Uso rápido (Windows, desde la carpeta del script):
     python guion_a_video.py --rapido             -> prueba rápida a media resolución
     python guion_a_video.py --gpu                -> codifica con NVIDIA (NVENC), mucho más rápido
 
-Requisitos: Python 3.9+, `pip install edge-tts`, y ffmpeg en el PATH
+Requisitos: Python 3.9+, la app Texto a Voz (CARPETA_TEXTO_VOZ) con edge-tts, y ffmpeg en el PATH
 (`winget install Gyan.FFmpeg`). Todo gratis y sin marca de agua.
 """
 
@@ -57,7 +57,7 @@ CARPETA_CACHE = BASE / ".cache"
 
 ETIQUETAS = ["JABON", "SLIME", "ARENA", "PINTURA", "PRENSA", "RUNNER", "PARKOUR", "CERA"]
 
-# Voz (edge-tts). Cada proyecto nuevo coge una al azar (mitad hombre, mitad mujer) y la recuerda.
+# Voz: la genera la app Texto a Voz (su motor, voz.py). Cada proyecto nuevo coge una al azar (mitad hombre, mitad mujer) y la recuerda.
 VOCES = {
     "es-ES-AlvaroNeural": "Hombre · España",
     "es-ES-ElviraNeural": "Mujer · España",
@@ -71,6 +71,7 @@ VOCES = {
     "es-AR-TomasNeural": "Hombre · Argentina",
     "es-AR-ElenaNeural": "Mujer · Argentina",
 }
+CARPETA_TEXTO_VOZ = BASE / "Texto_Voz"   # la app Texto a Voz, incluida en el repo
 VELOCIDAD = "+25%"          # "+0%", "+10%", "-5%" ...
 TONO = "+0Hz"
 
@@ -686,7 +687,7 @@ def datos_proyecto(g: Guion):
 
 
 # ──────────────────────────────────────────────────────────────────────────
-#  2. Voz con edge-tts (con caché: si repites, no vuelve a descargar)
+#  2. Voz con la app Texto a Voz (con caché: si repites, no vuelve a descargar)
 # ──────────────────────────────────────────────────────────────────────────
 
 def ffmpeg(*args, cwd=None, duracion=None):
@@ -721,48 +722,35 @@ def ffprobe_info(ruta):
         return 0.0, 0, 0
 
 
+def motor_voz():
+    """El motor de la app Texto a Voz (voz.py en CARPETA_TEXTO_VOZ)."""
+    if str(CARPETA_TEXTO_VOZ) not in sys.path:
+        sys.path.insert(0, str(CARPETA_TEXTO_VOZ))
+    import voz
+    return voz
+
+
 async def _tts_uno(texto, base: Path, voz, velocidad, tono, sem):
-    import edge_tts
     mp3, js = base.with_suffix(".mp3"), base.with_suffix(".json")
     if mp3.exists() and js.exists():
         return
     async with sem:
         for intento in range(4):
             try:
-                try:
-                    com = edge_tts.Communicate(texto, voz, rate=velocidad, pitch=tono, boundary="WordBoundary")
-                except TypeError:  # edge-tts < 7
-                    com = edge_tts.Communicate(texto, voz, rate=velocidad, pitch=tono)
-                limites = []
-                tmp = mp3.with_suffix(".part")
-                with open(tmp, "wb") as f:
-                    async for ch in com.stream():
-                        if ch["type"] == "audio":
-                            f.write(ch["data"])
-                        elif ch["type"] == "WordBoundary":
-                            limites.append([ch["text"], ch["offset"] / 1e7, ch["duration"] / 1e7])
-                if tmp.stat().st_size == 0:
+                audio, palabras = await motor_voz().sintetizar(texto, voz, int(velocidad.strip("%")), int(tono.removesuffix("Hz")))
+                if not audio:
                     raise RuntimeError("audio vacío")
-                tmp.replace(mp3)
-                js.write_text(json.dumps(limites, ensure_ascii=False), encoding="utf-8")
+                mp3.write_bytes(audio)
+                js.write_text(json.dumps(palabras, ensure_ascii=False), encoding="utf-8")  # el .json marca la línea como hecha
                 return
             except Exception as e:
                 if intento == 3:
-                    raise RuntimeError(f"edge-tts falló con: {texto!r}\n  {e}")
+                    raise RuntimeError(f"Texto a Voz falló con: {texto!r}\n  {e}")
                 await asyncio.sleep(1.5 * (intento + 1))
 
 
 def clave_cache(texto, voz, velocidad, tono):
     return hashlib.sha1(f"{voz}|{velocidad}|{tono}|{texto}".encode("utf-8")).hexdigest()[:20]
-
-
-def correr(fn_async):
-    if sys.platform == "win32":
-        try:
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        except Exception:
-            pass
-    asyncio.run(fn_async())
 
 
 def a_wav(base: Path):
@@ -780,7 +768,7 @@ def muestra_voz(voz, texto, velocidad=VELOCIDAD):
     async def uno():
         await _tts_uno(texto, base, voz, velocidad, TONO, asyncio.Semaphore(1))
 
-    correr(uno)
+    asyncio.run(uno())
     return a_wav(base)
 
 
@@ -796,7 +784,7 @@ def generar_voces(lineas, voz, velocidad, tono):
             sem = asyncio.Semaphore(TTS_CONCURRENCIA)
             await asyncio.gather(*[_tts_uno(l.texto_tts, b, voz, velocidad, tono, sem) for l, b in pendientes])
 
-        correr(todo)
+        asyncio.run(todo())
     for l, b in zip(lineas, bases):
         wav = a_wav(b)
         with wave.open(str(wav)) as w:
@@ -1427,9 +1415,10 @@ def main(argv=None):
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         sys.exit("❌ Falta ffmpeg. En Windows: winget install Gyan.FFmpeg  (y abre una terminal nueva)")
     try:
-        import edge_tts  # noqa: F401
+        motor_voz()
     except ImportError:
-        sys.exit("❌ Falta edge-tts:  pip install edge-tts")
+        sys.exit(f"❌ No encuentro la app Texto a Voz (voz.py) en {CARPETA_TEXTO_VOZ}, o le falta edge-tts:\n"
+                 "   ajusta CARPETA_TEXTO_VOZ o ejecuta  pip install edge-tts")
     if not todos_los_clips():
         log("⚠️  No hay clips en /fondos: se usará un fondo liso. Mete vídeos en fondos/JABON, fondos/SLIME, ...\n")
 

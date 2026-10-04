@@ -1,2 +1,2 @@
 # Dependencias de Python. FFmpeg se instala aparte (INSTALAR_Y_CREAR.bat lo hace con winget).
-edge-tts
+edge-tts>=7.2   # voz de Reddit Video y de Texto a Voz (trae aiohttp para su web)
