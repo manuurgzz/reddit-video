@@ -5,7 +5,7 @@
 <p align="center">
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white">
   <img alt="Python 3.9+" src="https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white">
-  <img alt="FFmpeg" src="https://img.shields.io/badge/FFmpeg-requerido-007808?logo=ffmpeg&logoColor=white">
+  <img alt="FFmpeg" src="https://img.shields.io/badge/FFmpeg-incluido-007808?logo=ffmpeg&logoColor=white">
   <img alt="edge-tts" src="https://img.shields.io/badge/voz-edge--tts-FF4500">
   <img alt="Obsidian" src="https://img.shields.io/badge/Obsidian-compatible-7C3AED?logo=obsidian&logoColor=white">
 </p>
@@ -57,21 +57,23 @@ Los vídeos se guardan en `salida\<nombre del guion>\`.
 
 ## Instalación
 
-> **Requisitos:** Windows 10/11 y conexión a internet (la voz se genera online). El instalador se encarga de Python, edge-tts y FFmpeg.
+> **Requisitos:** Windows 10/11 de 64 bits y conexión a internet (la voz se genera online). No hace falta instalar nada más: el instalador ya lleva dentro la app, la voz y FFmpeg.
 
-1. **Descarga el proyecto** con **Code → Download ZIP** (o la última versión en **Releases**) y descomprímelo donde quieras.
-2. **Haz doble clic en `INSTALAR_Y_CREAR.bat`.** Instala lo que falte (Python 3.12, las dependencias de `requirements.txt` y FFmpeg mediante `winget`) y abre la app.
-3. **Añade fondos.** La primera vez se crean las carpetas `fondos\JABON`, `SLIME`, `ARENA`, `PINTURA`, `PRENSA`, `RUNNER`, `PARKOUR` y `CERA`. Mete en cada una algún clip gratuito de Pexels o Pixabay (busca *soap cutting*, *slime*, *kinetic sand*, *paint pouring*, *hydraulic press*, *wax cutting*…).
+1. **Descarga `RedditVideo-Setup-X.Y.Z.exe`** de la última versión en **[Releases](https://github.com/manuurgzz/reddit-video/releases/latest)**.
+2. **Ábrelo y sigue el asistente.** Se instala solo para tu usuario (sin permisos de administrador), crea el icono en el escritorio y en el menú Inicio, y se desinstala desde *Configuración › Aplicaciones*. Windows SmartScreen puede avisar la primera vez porque el instalador no está firmado: **Más información › Ejecutar de todos modos**.
+3. **Añade fondos.** La primera vez se crea `Documentos\Reddit Video\` con las carpetas `fondos\JABON`, `SLIME`, `ARENA`, `PINTURA`, `PRENSA`, `RUNNER`, `PARKOUR` y `CERA` (también desde **Carpetas › Fondos** en la app). Mete en cada una algún clip gratuito de Pexels o Pixabay (busca *soap cutting*, *slime*, *kinetic sand*, *paint pouring*, *hydraulic press*, *wax cutting*…).
    - Valen en vertical u horizontal: en los shorts se recortan y en YouTube se colocan sobre un fondo desenfocado.
    - Si una carpeta está vacía, se usa otra que tenga clips.
    - Un vídeo de más de 15 minutos se reutiliza para toda su temática, cogiendo trozos seguidos para no repetir.
 4. **Música (opcional).** Mete archivos `.mp3` en `musica\` (por ejemplo, de la YouTube Audio Library o Pixabay Music).
-5. **Historias.** No hace falta nada más: pulsa **＋ Pegar historia…** en la app y pega el texto tal cual. Si usas Obsidian, pulsa **Conectar Obsidian…** y elige tu bóveda (lee `02_Clips` o `03_Guiones`). También vale cualquier carpeta con `.md` o `.txt`, y en `guiones\` hay un ejemplo.
+5. **Historias.** No hace falta nada más: pulsa **＋ Pegar historia** en la app y pega el texto tal cual. Si usas Obsidian, pulsa **Conectar Obsidian** y elige tu bóveda (lee `02_Clips` o `03_Guiones`). También vale cualquier carpeta con `.md` o `.txt`, y la primera vez hay una historia de ejemplo.
 
-A partir de ahí, basta con abrir **`crear_video.bat`**. Para convertir cualquier texto a audio sin hacer vídeo, abre **`texto_a_voz.bat`** (la web de Texto a Voz).
+Dónde guarda cada cosa la versión instalada: tus fondos, música, historias y vídeos en `Documentos\Reddit Video\`; los ajustes, las claves y la caché de voz en `%LOCALAPPDATA%\Reddit Video\` (**Carpetas › Datos de la app**). Desinstalar la app no toca ninguna de las dos.
 
 <details>
-<summary><b>Instalación manual</b> (sin el <code>.bat</code>)</summary>
+<summary><b>Desde el código fuente</b> (para desarrollar)</summary>
+
+Con Python 3.12 o superior y FFmpeg:
 
 ```bat
 winget install -e --id Python.Python.3.12
@@ -80,20 +82,39 @@ python -m pip install -r requirements.txt
 pythonw app.pyw
 ```
 
+`INSTALAR_Y_CREAR.bat` hace esto mismo de una vez, y `crear_video.bat` abre la app. Con `texto_a_voz.bat` se abre la web de Texto a Voz (convertir texto a audio sin hacer vídeo). Desde el código, los datos se guardan en la propia carpeta del proyecto.
+
 </details>
+
+### Construir el instalador
+
+```powershell
+winget install JRSoftware.InnoSetup      # una vez
+.\construir.ps1                          # -> dist\RedditVideo-Setup-<versión>.exe
+```
+
+`construir.ps1` descarga FFmpeg (se guarda en `build\`), empaqueta la app con PyInstaller (`RedditVideo.spec`) y crea el instalador con Inno Setup (`instalador.iss`). La versión sale de `version.py`. Para publicarlo, sube una etiqueta y GitHub Actions lo construye y lo adjunta a la Release (`.github\workflows\release.yml`):
+
+```bash
+git tag v1.0.0 && git push --tags
+```
+
+El instalador incluye FFmpeg (licencia GPL, build «essentials» de gyan.dev).
 
 ## Uso
 
 ### Desde la app
 
-Abre **`crear_video.bat`** y sigue las cuatro tarjetas:
+Abre **Reddit Video** desde el escritorio. La ventana se lee de izquierda a derecha y de arriba abajo:
 
-1. **Historia.** **＋ Pegar historia…** (título, subreddit y el texto tal cual; se guarda como nota en la carpeta de guiones) o elige una nota de la lista (la más reciente primero, con su estado de Obsidian: `pendiente`, `en-produccion`, `hecha`…). Debajo ves cuánto dura, cuántos shorts salen y qué parte va solo en YouTube. **Abrir nota** la abre en Obsidian. Avisa si faltan clips en alguna carpeta de fondos.
-2. **Post de Reddit.** El subreddit sale de la ficha de la historia y el usuario se inventa al azar (🎲 para otro). Todo es editable y a la derecha ves cómo quedará la tarjeta.
-3. **Voz.** Cada proyecto nuevo sortea una voz y la recuerda. **🎲 Otra al azar** para cambiarla y **▶ Escuchar** para oírla.
+1. **Historia.** **＋ Pegar historia** (título, subreddit y el texto tal cual; se guarda como nota en la carpeta de guiones) o elige una nota de la lista (la más reciente primero, con su estado de Obsidian: `pendiente`, `en-produccion`, `hecha`…). Debajo ves cuánto dura, cuántos shorts salen y qué parte va solo en YouTube. **Abrir nota** la abre en Obsidian. Avisa si faltan clips en alguna carpeta de fondos.
+2. **Tarjeta del post.** El subreddit sale de la ficha de la historia y el usuario se inventa al azar (**Al azar** para otro). Todo es editable y a la derecha ves cómo quedará la tarjeta.
+3. **Voz.** Cada historia nueva sortea una voz y la recuerda. **Otra al azar** para cambiarla y **▶ Escuchar** para oírla.
 4. **Qué crear.** YouTube, Shorts o los dos; música; prueba rápida; gráfica NVIDIA.
 
-Pulsa **Crear vídeos**: al terminar se abre la carpeta con el resultado. Con **Piloto automático…** (al lado) la app lo hace todo sola cada día: ver [Piloto automático](#piloto-automático). La voz, el subreddit y el usuario de cada proyecto se guardan en `.cache\proyectos.json`.
+Pulsa **Crear vídeos** (o `Ctrl+Intro`): el botón pasa a **Cancelar**, la barra marca el progreso y, al terminar, se abre la carpeta con el resultado. **Mostrar detalles** despliega el registro de lo que va haciendo (se abre solo si algo falla). Arriba a la derecha: **Carpetas** (vídeos, fondos, música y datos de la app) y **Piloto automático**, con el que la app lo hace todo sola cada día: ver [Piloto automático](#piloto-automático). La voz, el subreddit y el usuario de cada proyecto se guardan en `proyectos.json` (dentro de la carpeta de datos).
+
+**Pensada para no colgarse:** cancelar corta ffmpeg al momento y no deja vídeos a medias; si ffmpeg o la voz se quedan parados, se cortan solos (2 min sin avanzar / 90 s sin respuesta); los ajustes y las claves se escriben enteros o nada; el registro tiene tope y la ventana pinta por tandas aunque lleguen miles de líneas; solo se puede abrir una ventana a la vez, y los errores inesperados quedan en `error.log` sin tumbar la app. `python test_robustez.py` lo comprueba.
 
 ### Desde la terminal
 
@@ -232,11 +253,19 @@ Todos los ajustes están en el bloque `CONFIGURACIÓN`, al principio de [`guion_
 
 ```text
 reddit-video/
-├── app.pyw                 # Interfaz gráfica (Tkinter)
+├── app.pyw                 # Interfaz gráfica (Tkinter); con --una-vez / --crear funciona sin ventana
 ├── guion_a_video.py        # Motor: análisis del guion, cortes, voz, subtítulos y montaje
 ├── automatizar.py          # Piloto automático: Gemini, pasada diaria y publicación en YouTube y TikTok
+├── version.py              # Versión de la app (la usa el instalador)
+├── construir.ps1           # Construye el instalador: ffmpeg + PyInstaller + Inno Setup
+├── RedditVideo.spec        # Receta de PyInstaller
+├── instalador.iss          # Receta de Inno Setup (asistente, icono, desinstalador)
+├── assets/                 # Icono de la app (.ico y .png)
+├── herramientas/           # crear_icono.py: regenera el icono
+├── .github/workflows/      # Construye y publica el instalador al subir una etiqueta vXXX
 ├── test_cortes.py          # Comprueba los cortes automáticos
 ├── test_piloto.py          # Comprueba el piloto (sin conexión)
+├── test_robustez.py        # Comprueba que cancelar, guardar y la ventana no se cuelgan ni se saturan
 ├── Texto_Voz/              # App Texto a Voz: su motor (voz.py) genera la voz en off; también tiene web propia
 ├── texto_a_voz.bat         # Abre la web de Texto a Voz (http://localhost:8000)
 ├── crear_video.bat         # Abre la app
@@ -261,6 +290,8 @@ reddit-video/
 - [x] Interfaz con tema oscuro y vista previa del post
 - [x] Cortes automáticos de los shorts y texto normal sin formato (sin depender de Obsidian)
 - [x] **Piloto automático:** Gemini escribe, la app crea los vídeos y los publica (YouTube programado, TikTok como borrador)
+- [x] **Instalador `.exe`** con icono, FFmpeg incluido y publicación automática en Releases; interfaz rediseñada
+- [ ] Firmar el instalador (evita el aviso de SmartScreen)
 - [ ] Publicación directa en TikTok (*Direct Post*, necesita otra revisión de TikTok) y en Instagram Reels
 - [ ] Notas de edición finas (congelar imagen, pantalla partida…)
 
