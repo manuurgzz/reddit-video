@@ -1661,7 +1661,9 @@ def main(argv=None):
         partes_hechas.add(c.parte)
 
     if hechos and not a.rapido:  # las pruebas rápidas no cuentan como clip hecho
-        marcar_en_obsidian(g.ruta, partes_hechas, youtube_hecho)
+        if not marcar_en_obsidian(g.ruta, partes_hechas, youtube_hecho) and estado_nota(g.ruta) in ("pendiente", "aprobada"):
+            # nota sin checklist (pegada en la app o escrita por el piloto): el estado sigue lo creado
+            poner_campo(g.ruta, "estado", "hecha" if solo == "todo" else "en-produccion")
     if hechos:
         log("\n✅ Listo:")
         for h in hechos:
