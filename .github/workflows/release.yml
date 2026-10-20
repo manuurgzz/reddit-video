@@ -1,0 +1,44 @@
+name: Instalador
+
+# Al subir una etiqueta (git tag v1.0.0 && git push --tags) se construye el instalador y se publica como Release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  instalador:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Dependencias
+        run: pip install -r requirements.txt
+      - name: Tests
+        run: |
+          python test_cortes.py
+          python test_piloto.py
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+      - name: Construir el instalador
+        shell: pwsh
+        run: ./construir.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: instalador
+          path: dist/RedditVideo-Setup-*.exe
+      - name: Publicar la Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/RedditVideo-Setup-*.exe
+          generate_release_notes: true

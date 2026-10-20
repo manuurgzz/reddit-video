@@ -8,3 +8,7 @@ __pycache__/
 log_ejecucion.txt
 ajustes.json
 secretos.json
+
+# Empaquetado
+build/
+dist/
