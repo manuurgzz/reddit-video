@@ -2,6 +2,14 @@
 
 Todos los cambios relevantes del proyecto se documentan aquí. El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [1.0.1] · Escribir historias desde la ventana
+
+### Añadido
+- Botón **✦ Escribir con IA** en la tarjeta Historia: Gemini escribe una historia nueva al momento, sin entrar en «Piloto automático», y se carga para revisarla. Si falta la clave de Gemini, ofrece ponerla.
+
+### Corregido
+- Al crear los vídeos de una nota sin checklist (pegada en la app o escrita por el piloto), el estado pasa de «aprobada» a «hecha» (o «en-produccion» si solo se creó un formato).
+
 ## [1.0.0] · Instalador y app rediseñada
 
 ### Añadido

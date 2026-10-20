@@ -186,6 +186,8 @@ class App(tk.Tk):
         fila = ttk.Frame(c)
         fila.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(px(12), 0))
         Pildora(fila, "＋  Pegar historia", self.pegar_historia, "acento").pack(side="left")
+        self.btn_escribir = Pildora(fila, "✦  Escribir con IA", self.escribir_historia, "acento")
+        self.btn_escribir.pack(side="left", padx=(px(8), 0))
         Pildora(fila, "Abrir otra…", self.elegir_archivo).pack(side="left", padx=px(8))
         Pildora(fila, "Abrir nota", self.abrir_nota, "fantasma").pack(side="left")
         Pildora(fila, "Conectar Obsidian", self.conectar, "fantasma").pack(side="right")
@@ -713,6 +715,7 @@ class App(tk.Tk):
         gv.cancelar_ya.clear()
         self.btn_crear.poner("Cancelar", estilo="secundario")
         self.btn_piloto.poner(estado="disabled")
+        self.btn_escribir.poner(estado="disabled")
         self.aviso(texto, TEXTO)
         self.texto.delete("1.0", "end")
         self.relleno.place_configure(relwidth=0)
@@ -759,6 +762,26 @@ class App(tk.Tk):
                 self.q.put(("log", f"\n❌ Error: {e}\n{traceback.format_exc()}"))
             self.q.put(("fin", ok))
         self.empezar("Creando vídeos…", trabajo)
+
+    def escribir_historia(self):
+        """Gemini escribe una historia nueva ahora mismo (sin activar el piloto) y se carga para revisarla."""
+        if not (au.secretos().get("gemini") or os.environ.get("GEMINI_API_KEY")):
+            if messagebox.askyesno("Falta la clave de Gemini", "Para que la IA escriba historias hace falta tu clave de Gemini "
+                                   "(es gratis). ¿La pones ahora?", parent=self):
+                self.piloto()
+            return
+
+        def trabajo():
+            ok = False
+            try:
+                self.q.put(("fin", ("nota", au.nueva_historia(au.ajustes()))))
+                return
+            except gv.Cancelado:
+                ok = "cancelado"
+            except (Exception, SystemExit) as e:
+                self.q.put(("log", f"❌ No se pudo escribir la historia: {au.motivo(e)}"))
+            self.q.put(("fin", ok))
+        self.empezar("Gemini está escribiendo una historia…", trabajo)
 
     def abrir_salida(self):
         d = gv.CARPETA_SALIDA / self.g.slug if self.g else gv.CARPETA_SALIDA
@@ -1020,7 +1043,12 @@ class App(tk.Tk):
         self.ocupado = self.cancelando = False
         self.btn_crear.poner("Crear vídeos", estado="normal", estilo="primario")
         self.btn_piloto.poner(estado="normal")
-        if ok == "cancelado":
+        self.btn_escribir.poner(estado="normal")
+        if isinstance(ok, tuple):   # historia nueva escrita por la IA
+            self.relleno.place_configure(relwidth=1.0)
+            self.cargar_lista(ok[1])
+            self.aviso("✓ Historia escrita. Léela y, si te gusta, pulsa «Crear vídeos».", VERDE)
+        elif ok == "cancelado":
             self.relleno.place_configure(relwidth=0)
             self.aviso("Cancelado. Lo que ya estaba hecho se queda guardado para la próxima vez.", AMARILLO)
         elif ok == "piloto":  # puede haber notas nuevas o con otro estado: se refresca la lista sin borrar el registro
