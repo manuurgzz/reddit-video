@@ -1,2 +1,4 @@
 # Dependencias de Python. FFmpeg se instala aparte (INSTALAR_Y_CREAR.bat lo hace con winget).
-edge-tts>=7.2   # voz de Reddit Video y de Texto a Voz (trae aiohttp para su web)
+edge-tts>=7.3.1   # voz de Reddit Video y de Texto a Voz (trae aiohttp para su web). Microsoft cambia su servicio y las versiones viejas dan 403
+pyinstaller>=6.10 # solo para construir el instalador (construir.ps1)
+pillow>=10        # solo para regenerar el icono (herramientas/crear_icono.py)

@@ -45,7 +45,7 @@ from urllib.request import Request, urlopen
 
 import guion_a_video as gv
 
-SECRETOS = gv.BASE / "secretos.json"
+SECRETOS = gv.DATOS / "secretos.json"
 REGISTRO_PASADAS = gv.CARPETA_CACHE / "piloto.log"
 ESTADO = gv.CARPETA_CACHE / "piloto.json"
 CANDADO = gv.CARPETA_CACHE / "piloto.lock"
@@ -83,7 +83,7 @@ def secretos():
 
 
 def guardar_secretos(**cambios):
-    SECRETOS.write_text(json.dumps({**secretos(), **cambios}, ensure_ascii=False, indent=1), encoding="utf-8")
+    gv.guardar_json(SECRETOS, {**secretos(), **cambios})
 
 
 def boveda():
@@ -91,7 +91,7 @@ def boveda():
     return Path(b) if b else None
 
 
-def pedir(url, datos=None, cabeceras=None, metodo=None, formulario=False):
+def pedir(url, datos=None, cabeceras=None, metodo=None, formulario=False, espera=60):
     """Petición HTTPS. `datos`: dict (JSON o formulario), bytes o un archivo abierto. Devuelve (JSON, cabeceras)."""
     cab = dict(cabeceras or {})
     if isinstance(datos, dict):
@@ -101,7 +101,7 @@ def pedir(url, datos=None, cabeceras=None, metodo=None, formulario=False):
             datos = json.dumps(datos, ensure_ascii=False).encode("utf-8")
             cab.setdefault("Content-Type", "application/json; charset=UTF-8")
     try:
-        with urlopen(Request(url, data=datos, headers=cab, method=metodo), timeout=900) as r:
+        with urlopen(Request(url, data=datos, headers=cab, method=metodo), timeout=espera) as r:
             cuerpo = r.read()
             try:
                 return json.loads(cuerpo), r.headers
@@ -179,7 +179,7 @@ def gemini(cfg, sistema, turnos, esquema=None):
     for modelo, intento in ((m, i) for m in modelos for i in range(3)):
         try:
             r, _ = pedir(f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent",
-                         cuerpo, {"x-goog-api-key": clave})
+                         cuerpo, {"x-goog-api-key": clave}, espera=300)
             break
         except RuntimeError as e:  # 429 (límite por minuto) o 5xx (saturado): esperar, reintentar y, si sigue, otro modelo
             if not re.match(r"(429|5\d\d) ", str(e)) or (modelo, intento) == (modelos[-1], 2):
@@ -293,7 +293,7 @@ pregunta: {q(plan["pregunta"])}
         i = max((k for k, l in enumerate(lineas) if l.startswith("|")), default=len(lineas) - 1)
         lineas.insert(i + 1, f"| {ident} | {plan['titulo'].strip().replace('|', '/')} | propia (ficción, estilo {sub}) | "
                              f"{date.today()} | {gv.estado_nota(ruta)} | [[{ruta.stem}]] | — | Gemini · piloto automático |")
-        reg.write_text("\n".join(lineas) + "\n", encoding="utf-8")
+        gv.escribir_texto(reg, "\n".join(lineas) + "\n")
     return ruta
 
 
@@ -341,7 +341,7 @@ def poner_estado(nota, estado, motivo=""):
         nuevo = re.sub(rf"^((?:\|[^|\n]*){{4}}\|)[^|\n]*(\|.*{re.escape(f'[[{nota.stem}]]')}.*)$",
                        rf"\g<1> {estado} \g<2>", txt, flags=re.M)
         if nuevo != txt:
-            reg.write_text(nuevo, encoding="utf-8")
+            gv.escribir_texto(reg, nuevo)
 
 
 def cola():
@@ -455,15 +455,20 @@ def iniciar_sesion(url_de, puerto=0, ruta="/"):
         def log_message(self, *_):
             pass
 
-    srv = HTTPServer(("127.0.0.1", puerto), Vuelta)
-    srv.timeout = 2
-    redir = f"http://127.0.0.1:{srv.server_port}{ruta}"
-    estado = azar.token_urlsafe(16)
-    webbrowser.open(url_de(redir, estado))
-    fin = time.time() + 300
-    while not recibido and time.time() < fin:
-        srv.handle_request()
-    srv.server_close()
+    try:
+        srv = HTTPServer(("127.0.0.1", puerto), Vuelta)
+    except OSError:
+        raise RuntimeError(f"el puerto {puerto} está ocupado (¿otro «Conectar» a medias?): ciérralo y reinténtalo")
+    try:
+        srv.timeout = 2
+        redir = f"http://127.0.0.1:{srv.server_port}{ruta}"
+        estado = azar.token_urlsafe(16)
+        webbrowser.open(url_de(redir, estado))
+        fin = time.time() + 300
+        while not recibido and time.time() < fin:
+            srv.handle_request()
+    finally:
+        srv.server_close()
     if recibido.get("state") != estado or "code" not in recibido:
         raise RuntimeError("no se completó el inicio de sesión" + (f": {recibido['error']}" if "error" in recibido else ""))
     return recibido["code"], redir
@@ -524,7 +529,7 @@ def subir_youtube(video, titulo, descripcion, cuando, cfg):
                    {"Authorization": f"Bearer {token}", "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": str(tam)})
     with open(video, "rb") as f:  # ponytail: una sola petición; si se corta, se repite entera en la próxima pasada
         r, _ = pedir(cab["Location"], f, {"Authorization": f"Bearer {token}", "Content-Type": "video/mp4",
-                                          "Content-Length": str(tam)}, "PUT")
+                                          "Content-Length": str(tam)}, "PUT", espera=1800)
     url = f"https://youtu.be/{r['id']}"
     gv.log(f"   ▶ YouTube: {video.name} → {url}" + (f" (sale el {cuando:%d/%m a las %H:%M})" if programado else ""))
     return url
@@ -583,7 +588,7 @@ def subir_tiktok(video):
         for i in range(n):
             ini, fin = i * trozo, (tam if i == n - 1 else (i + 1) * trozo)
             pedir(r["data"]["upload_url"], f.read(fin - ini),
-                  {"Content-Type": "video/mp4", "Content-Range": f"bytes {ini}-{fin - 1}/{tam}"}, "PUT")
+                  {"Content-Type": "video/mp4", "Content-Range": f"bytes {ini}-{fin - 1}/{tam}"}, "PUT", espera=1800)
     gv.log(f"   ♪ TikTok: {video.name} → borrador en tu bandeja de entrada")
 
 
@@ -599,6 +604,8 @@ def motivo(e):
 def pasada(cfg=None):
     """Una pasada; lo que va haciendo sale donde diga gv.log (la app) y queda también en .cache/piloto.log."""
     CANDADO.parent.mkdir(parents=True, exist_ok=True)
+    if REGISTRO_PASADAS.exists() and REGISTRO_PASADAS.stat().st_size > 2_000_000:   # que el registro no crezca sin fin
+        REGISTRO_PASADAS.replace(REGISTRO_PASADAS.with_suffix(".log.1"))
     antes = gv.log
     with open(REGISTRO_PASADAS, "a", encoding="utf-8") as archivo:
         def log(m=""):
@@ -612,7 +619,7 @@ def pasada(cfg=None):
 
 
 def _pasada(cfg):
-    with open(CANDADO, "w") as candado:
+    with open(CANDADO, "a+b") as candado:   # sin truncar: si otra pasada lo tiene bloqueado, no falla al abrirlo
         try:
             msvcrt.locking(candado.fileno(), msvcrt.LK_NBLCK, 1)  # se suelta solo si el proceso muere
         except OSError:
@@ -657,7 +664,7 @@ def _pasada(cfg):
                 fallos.append(f"publicar: {motivo(e)[:120]}")
             else:
                 if subidos:
-                    ESTADO.write_text(json.dumps({"publicado": str(date.today())}), encoding="utf-8")
+                    gv.guardar_json(ESTADO, {"publicado": str(date.today())})
                     hecho += subidos
 
         if pendientes := sum(gv.campo(p, "origen") == "gemini" for p in notas("pendiente")):
@@ -691,8 +698,11 @@ def programar(activo, hora="09:00"):
     """Da de alta (o de baja) la tarea de Windows que lanza una pasada al día (si el PC estaba apagado, al encenderlo)."""
     q = lambda s: "'" + str(s).replace("'", "''") + "'"
     if activo:
-        exe = Path(sys.executable).with_name("pythonw.exe")
-        argumento = f'"{Path(__file__).resolve()}" --una-vez'
+        if gv.INSTALADA:   # el propio .exe de la app, que con --una-vez hace la pasada sin abrir ventana
+            exe, argumento = Path(sys.executable), "--una-vez"
+        else:
+            exe = Path(sys.executable).with_name("pythonw.exe")
+            argumento = f'"{Path(__file__).resolve().with_name("app.pyw")}" --una-vez'
         ps = (f"$a = New-ScheduledTaskAction -Execute {q(exe if exe.exists() else sys.executable)} "
               f"-Argument {q(argumento)} -WorkingDirectory {q(gv.BASE)}; "
               f"$t = New-ScheduledTaskTrigger -Daily -At {q(hora)}; "
@@ -700,8 +710,11 @@ def programar(activo, hora="09:00"):
               f"Register-ScheduledTask -TaskName {q(TAREA)} -Action $a -Trigger $t -Settings $s -Force | Out-Null")
     else:
         ps = f"Unregister-ScheduledTask -TaskName {q(TAREA)} -Confirm:$false -ErrorAction SilentlyContinue"
-    r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-                       capture_output=True, text=True, creationflags=gv.SIN_VENTANA)
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, creationflags=gv.SIN_VENTANA, timeout=60)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Windows no respondió al programar la tarea (tardó más de 60 s)")
     if r.returncode:
         raise RuntimeError(r.stderr.strip()[-400:] or "no se pudo cambiar la tarea programada")
 

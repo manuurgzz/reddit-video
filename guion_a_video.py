@@ -20,6 +20,7 @@ Requisitos: Python 3.9+, la app Texto a Voz (CARPETA_TEXTO_VOZ) con edge-tts, y 
 
 import argparse
 import asyncio
+import collections
 import hashlib
 import json
 import os
@@ -28,6 +29,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import unicodedata
 import wave
 from dataclasses import dataclass, field, replace
@@ -37,8 +40,45 @@ from pathlib import Path
 #  CONFIGURACIÓN — cambia aquí lo que quieras
 # ══════════════════════════════════════════════════════════════════════════
 
-BASE = Path(__file__).resolve().parent
-AJUSTES = BASE / "ajustes.json"       # bóveda de Obsidian / carpeta de guiones elegida en la app (no se sube a GitHub)
+INSTALADA = getattr(sys, "frozen", False)   # True cuando corre el .exe del instalador
+# RECURSOS: lo que viaja con la app (Texto_Voz, docs, ejemplos, ffmpeg). BASE: lo del usuario (fondos, música, salida…).
+# DATOS: ajustes, claves y caché. Desde el código fuente las tres son la carpeta del proyecto.
+RECURSOS = Path(getattr(sys, "_MEIPASS", None) or Path(__file__).resolve().parent)
+def _documentos():
+    """La carpeta Documentos real (puede estar redirigida a OneDrive); si Windows no la da, ~/Documents."""
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(260)
+        if ctypes.windll.shell32.SHGetFolderPathW(0, 5, 0, 0, buf) == 0:   # 5 = CSIDL_PERSONAL
+            return Path(buf.value)
+    except Exception:
+        pass
+    return Path.home() / "Documents"
+
+
+if INSTALADA:
+    BASE = _documentos() / "Reddit Video"
+    DATOS = Path(os.environ.get("LOCALAPPDATA", BASE)) / "Reddit Video"
+else:
+    BASE = DATOS = RECURSOS
+AJUSTES = DATOS / "ajustes.json"      # bóveda de Obsidian / carpeta de guiones elegida en la app (no se sube a GitHub)
+
+
+def escribir_texto(ruta: Path, texto):
+    """Escribe el archivo entero o nada: si el PC se apaga a mitad, el anterior sigue intacto.
+    Si Obsidian o OneDrive tienen la nota abierta y no deja reemplazarla, la escribe directamente."""
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ruta.with_name(ruta.name + ".tmp")
+    tmp.write_text(texto, encoding="utf-8")
+    try:
+        os.replace(tmp, ruta)
+    except PermissionError:
+        tmp.unlink(missing_ok=True)
+        ruta.write_text(texto, encoding="utf-8")
+
+
+def guardar_json(ruta: Path, datos):
+    escribir_texto(ruta, json.dumps(datos, ensure_ascii=False, indent=1))
 
 
 def leer_ajustes():
@@ -53,7 +93,7 @@ CARPETA_FONDOS = BASE / "fondos"      # fondos/JABON, fondos/SLIME, ...
 CARPETA_MUSICA = BASE / "musica"      # mp3/m4a/wav opcionales (se elige uno al azar)
 CARPETA_FUENTES = BASE / "fuentes"    # opcional: mete aquí .ttf (p. ej. Montserrat ExtraBold)
 CARPETA_SALIDA = BASE / "salida"
-CARPETA_CACHE = BASE / ".cache"
+CARPETA_CACHE = DATOS / ".cache"
 
 ETIQUETAS = ["JABON", "SLIME", "ARENA", "PINTURA", "PRENSA", "RUNNER", "PARKOUR", "CERA"]
 
@@ -71,7 +111,7 @@ VOCES = {
     "es-AR-TomasNeural": "Hombre · Argentina",
     "es-AR-ElenaNeural": "Mujer · Argentina",
 }
-CARPETA_TEXTO_VOZ = BASE / "Texto_Voz"   # la app Texto a Voz, incluida en el repo
+CARPETA_TEXTO_VOZ = RECURSOS / "Texto_Voz"   # la app Texto a Voz, incluida en el repo
 VELOCIDAD = "+25%"          # "+0%", "+10%", "-5%" ...
 TONO = "+0Hz"
 
@@ -141,8 +181,13 @@ SR = 24000  # frecuencia de muestreo interna de la voz
 SIN_VENTANA = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # que ffmpeg no abra consolas desde la app
 al_progresar = None  # la app lo cambia por una función(fracción 0-1) para la barra de progreso
 
-# ffmpeg de winget aunque la terminal no lo tenga en el PATH
-if not shutil.which("ffmpeg"):
+if sys.stdout is None:   # el .exe sin consola no tiene stdout: print() fallaría
+    sys.stdout = sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+# ffmpeg: el que trae el instalador (RECURSOS/ffmpeg) y, si no, el de winget aunque la terminal no lo tenga en el PATH
+if (RECURSOS / "ffmpeg" / "ffmpeg.exe").exists():
+    os.environ["PATH"] = f"{RECURSOS / 'ffmpeg'}{os.pathsep}{os.environ['PATH']}"
+elif not shutil.which("ffmpeg"):
     _wg = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet"
     for _d in [_wg / "Links", *_wg.glob("Packages/Gyan.FFmpeg*/ffmpeg-*/bin")]:
         os.environ["PATH"] = f"{_d}{os.pathsep}{os.environ['PATH']}"
@@ -490,7 +535,7 @@ def cortes_automaticos(escenas, semilla=""):
     if n < 2:
         return []
     bono = [suspense(l, fin, seq[i + 1][0] if i + 1 < n else None) for i, (l, _, fin) in enumerate(seq)]
-    meta, margen = total * (1 - FINAL_SOLO_YOUTUBE), total * 0.1
+    meta, margen = total * (1 - FINAL_SOLO_YOUTUBE), max(total * 0.1, 0.5)
     finales = [j for j in range(1, n) if abs(t[j] - meta) <= margen] if FINAL_SOLO_YOUTUBE else [n]
 
     # ponytail: O(n·frases por short); de sobra para historias de una hora
@@ -627,8 +672,7 @@ def leer_proyectos():
 def guardar_proyecto(slug, datos):
     todos = leer_proyectos()
     todos[slug] = datos
-    ARCHIVO_PROYECTOS.parent.mkdir(parents=True, exist_ok=True)
-    ARCHIVO_PROYECTOS.write_text(json.dumps(todos, ensure_ascii=False, indent=1), encoding="utf-8")
+    guardar_json(ARCHIVO_PROYECTOS, todos)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -648,7 +692,7 @@ def conectar_carpeta(carpeta: Path):
 
 def guardar_ajustes(**cambios):
     """Cambia solo esas claves de ajustes.json (el resto, como el bloque del piloto automático, se queda)."""
-    AJUSTES.write_text(json.dumps({**leer_ajustes(), **cambios}, ensure_ascii=False, indent=1), encoding="utf-8")
+    guardar_json(AJUSTES, {**leer_ajustes(), **cambios})
 
 
 def _frontmatter(txt):
@@ -678,7 +722,7 @@ def poner_campo(ruta: Path, clave, valor):
         txt = txt.replace(fm, re.sub(rf"^{clave}:.*$", lambda _: linea, fm, count=1, flags=re.M), 1)
     else:
         txt = txt.replace(fm, f"{fm}\n{linea}", 1)
-    ruta.write_text(txt, encoding="utf-8")
+    escribir_texto(ruta, txt)
 
 
 def estado_nota(ruta: Path):
@@ -705,7 +749,7 @@ def marcar_en_obsidian(ruta: Path, partes, youtube):
     if estado_nota(ruta) not in ("publicada", "descartada"):
         nuevo = re.sub(r"^estado:.*$", f"estado: {'hecha' if hechos == total else 'en-produccion'}",
                        nuevo, count=1, flags=re.M)
-    ruta.write_text(nuevo, encoding="utf-8")
+    escribir_texto(ruta, nuevo)
     log(f"📝 Obsidian: {hechos}/{total} clips marcados como hechos en la nota.")
     return True
 
@@ -723,30 +767,73 @@ def datos_proyecto(g: Guion):
 #  2. Voz con la app Texto a Voz (con caché: si repites, no vuelve a descargar)
 # ──────────────────────────────────────────────────────────────────────────
 
+class Cancelado(BaseException):
+    """El usuario pulsó «Cancelar». No es Exception a propósito: ningún «except Exception» (p. ej. el del piloto,
+    que marcaría la historia con error) debe tragársela."""
+
+
+cancelar_ya = threading.Event()   # la app lo activa con cancelar(); se limpia al empezar otro trabajo
+_procesos = set()                 # ffmpeg en marcha, para poder pararlos
+PARADO_MAX = 120                  # s sin que ffmpeg avance (ni una línea de progreso) y se da por colgado
+
+
+def cancelar():
+    cancelar_ya.set()
+    for p in list(_procesos):
+        p.kill()
+
+
 def ffmpeg(*args, cwd=None, duracion=None):
-    """Lanza ffmpeg. Con `duracion`, avisa del progreso a `al_progresar`."""
+    """Lanza ffmpeg. Con `duracion`, avisa del progreso a `al_progresar`. Se corta si lo cancelan o se queda parado."""
+    if cancelar_ya.is_set():
+        raise Cancelado()
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
     cmd += [str(a) for a in args]
-    p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    p = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          text=True, errors="replace", creationflags=SIN_VENTANA)
-    errores = []
-    for linea in p.stdout:
-        if linea.startswith("out_time_us=") and duracion and al_progresar:
-            try:
-                al_progresar(min(int(linea[12:]) / 1e6 / duracion, 1.0))
-            except ValueError:
-                pass
-        elif not re.match(r"^\w+=", linea):
-            errores.append(linea.rstrip())
-    if p.wait() != 0:
-        raise RuntimeError("ffmpeg falló:\n  " + "\n  ".join(errores[-8:] or [" ".join(cmd)]))
+    _procesos.add(p)
+    ultimo = [time.monotonic()]
+    colgado = threading.Event()
+
+    def vigilante():  # ffmpeg escribe progreso cada ~0,5 s: si pasa tanto sin nada, está bloqueado
+        while p.poll() is None:
+            time.sleep(2)
+            if time.monotonic() - ultimo[0] > PARADO_MAX:
+                colgado.set()
+                p.kill()
+    threading.Thread(target=vigilante, daemon=True).start()
+    errores = collections.deque(maxlen=8)
+    try:
+        for linea in p.stdout:
+            ultimo[0] = time.monotonic()
+            if linea.startswith("out_time_us=") and duracion and al_progresar:
+                try:
+                    al_progresar(min(int(linea[12:]) / 1e6 / duracion, 1.0))
+                except ValueError:
+                    pass
+            elif not re.match(r"^\w+=", linea):
+                errores.append(linea.rstrip())
+        codigo = p.wait()
+    finally:
+        _procesos.discard(p)
+        p.stdout.close()
+        if p.poll() is None:
+            p.kill()
+    if (cancelar_ya.is_set() or colgado.is_set() or codigo != 0) and cmd[-1].endswith(".mp4"):
+        Path(cmd[-1]).unlink(missing_ok=True)   # que no quede un vídeo a medias en la carpeta de salida
+    if cancelar_ya.is_set():
+        raise Cancelado()
+    if colgado.is_set():
+        raise RuntimeError(f"ffmpeg se quedó parado más de {PARADO_MAX} s y se cortó.")
+    if codigo != 0:
+        raise RuntimeError("ffmpeg falló:\n  " + "\n  ".join(errores or [" ".join(cmd)]))
 
 
 def ffprobe_info(ruta):
     r = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
          "stream=width,height:format=duration", "-of", "json", str(ruta)],
-        capture_output=True, text=True, creationflags=SIN_VENTANA)
+        capture_output=True, text=True, creationflags=SIN_VENTANA, stdin=subprocess.DEVNULL, timeout=60)
     try:
         d = json.loads(r.stdout)
         st = d.get("streams", [{}])[0]
@@ -770,15 +857,22 @@ async def _tts_uno(texto, base: Path, voz, velocidad, tono, sem):
     async with sem:
         for intento in range(4):
             try:
-                audio, palabras = await motor_voz().sintetizar(texto, voz, int(velocidad.strip("%")), int(tono.removesuffix("Hz")))
+                if cancelar_ya.is_set():
+                    raise Cancelado()
+                audio, palabras = await asyncio.wait_for(   # sin red, edge-tts podría esperar sin fin
+                    motor_voz().sintetizar(texto, voz, int(velocidad.strip("%")), int(tono.removesuffix("Hz"))), 90)
                 if not audio:
                     raise RuntimeError("audio vacío")
                 mp3.write_bytes(audio)
-                js.write_text(json.dumps(palabras, ensure_ascii=False), encoding="utf-8")  # el .json marca la línea como hecha
+                escribir_texto(js, json.dumps(palabras, ensure_ascii=False))  # el .json marca la línea como hecha
                 return
+            except Cancelado:
+                raise
             except Exception as e:
                 if intento == 3:
-                    raise RuntimeError(f"Texto a Voz falló con: {texto!r}\n  {e}")
+                    ayuda = ("\n  Microsoft ha cambiado su servicio de voz: instala la última versión de Reddit Video "
+                             "(o, desde el código, pip install -U edge-tts)." if "403" in str(e) else "")
+                    raise RuntimeError(f"Texto a Voz falló con: {texto!r}\n  {e}{ayuda}")
                 await asyncio.sleep(1.5 * (intento + 1))
 
 
@@ -789,7 +883,9 @@ def clave_cache(texto, voz, velocidad, tono):
 def a_wav(base: Path):
     wav = base.with_suffix(".wav")
     if not wav.exists():
-        ffmpeg("-i", base.with_suffix(".mp3"), "-ac", "1", "-ar", SR, "-c:a", "pcm_s16le", wav)
+        tmp = base.with_suffix(".tmp.wav")   # si cancelan a mitad, no queda un .wav cortado que se reutilice
+        ffmpeg("-i", base.with_suffix(".mp3"), "-ac", "1", "-ar", SR, "-c:a", "pcm_s16le", tmp)
+        os.replace(tmp, wav)
     return wav
 
 
@@ -809,6 +905,14 @@ def generar_voces(lineas, voz, velocidad, tono):
     dir_tts = CARPETA_CACHE / "tts"
     dir_tts.mkdir(parents=True, exist_ok=True)
     bases = [dir_tts / clave_cache(l.texto_tts, voz, velocidad, tono) for l in lineas]
+    for b in bases:   # caché dañada (disco lleno, cierre a mitad): se borra y se regenera en vez de fallar siempre
+        js = b.with_suffix(".json")
+        try:
+            if js.exists():
+                json.loads(js.read_text(encoding="utf-8"))
+        except ValueError:
+            for ext in (".json", ".mp3", ".wav"):
+                b.with_suffix(ext).unlink(missing_ok=True)
     pendientes = [(l, b) for l, b in zip(lineas, bases) if not b.with_suffix(".json").exists()]
     if pendientes:
         log(f"🎙️  Generando voz ({len(pendientes)} líneas nuevas, {voz})...")
@@ -965,7 +1069,8 @@ def construir_linea_tiempo(escenas, intro: Linea = None, final: Linea = None, co
         col.append(Colocada(final, t, subs=False))
         t += final.dur
     total = t + cola
-    tramos[-1][1] = total
+    if tramos:
+        tramos[-1][1] = total
     return col, tramos, fin_voz, total
 
 
@@ -1218,6 +1323,8 @@ def escribir_srt(colocadas, ruta: Path):
         if not c.subs:
             continue
         n += 1
+        if not c.linea.palabras:
+            continue
         a = c.t + c.linea.palabras[0].ini
         b = c.t + c.linea.dur
 
@@ -1277,7 +1384,7 @@ def tramos_de_fondo(tramos, total, rng, vertical, tema=None):
         tema = tema or rng.choice([e for e in ETIQUETAS if clips_de(e)] or [""])
     out, t = [], 0.0
     while t < total - 0.01:
-        fin = min(t + (DURACION_FONDO_VERTICAL if vertical else DURACION_FONDO_HORIZONTAL), total)
+        fin = min(t + max(DURACION_FONDO_VERTICAL if vertical else DURACION_FONDO_HORIZONTAL, 1), total)
         if total - fin < 5:  # sin trozo final de pocos segundos
             fin = total
         out.append((t, fin, tema if vertical else next((e for a, b, e in tramos if a <= t < b), tramos[-1][2]).etiqueta))
@@ -1295,9 +1402,13 @@ def hay_nvenc():
     """¿Puede ffmpeg codificar con una gráfica NVIDIA en este PC? (se comprueba una vez)"""
     global _nvenc
     if _nvenc is None:
-        _nvenc = shutil.which("ffmpeg") is not None and subprocess.run(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=s=640x360", "-frames:v", "5",
-             *CODEC_GPU, "-f", "null", "-"], capture_output=True, creationflags=SIN_VENTANA).returncode == 0
+        try:
+            _nvenc = shutil.which("ffmpeg") is not None and subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=s=640x360", "-frames:v", "5",
+                 *CODEC_GPU, "-f", "null", "-"], capture_output=True, creationflags=SIN_VENTANA,
+                stdin=subprocess.DEVNULL, timeout=30).returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            _nvenc = False
     return _nvenc
 
 
@@ -1394,6 +1505,9 @@ def preparar_carpetas():
         (CARPETA_FONDOS / e).mkdir(parents=True, exist_ok=True)
     CARPETA_MUSICA.mkdir(parents=True, exist_ok=True)
     CARPETA_SALIDA.mkdir(parents=True, exist_ok=True)
+    ejemplo = RECURSOS / "guiones"
+    if INSTALADA and ejemplo.is_dir() and not CARPETA_GUIONES.exists():   # primer arranque: una historia de muestra
+        shutil.copytree(ejemplo, CARPETA_GUIONES)
 
 
 def resumen(g: Guion):
@@ -1440,6 +1554,7 @@ def main(argv=None):
     ap.add_argument("--semilla", type=int, default=None, help="fija la elección de fondos")
     ap.add_argument("--analizar", action="store_true", help="solo muestra lo que ha entendido del guion")
     a = ap.parse_args(argv)
+    cancelar_ya.clear()
 
     preparar_carpetas()
     ruta = Path(a.guion) if a.guion else ultimo_guion()
@@ -1459,7 +1574,7 @@ def main(argv=None):
         return
 
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
-        sys.exit("❌ Falta ffmpeg. En Windows: winget install Gyan.FFmpeg  (y abre una terminal nueva)")
+        sys.exit("❌ Falta ffmpeg. Reinstala la app (lo trae incluido) o, desde el código: winget install Gyan.FFmpeg")
     try:
         motor_voz()
     except ImportError:
